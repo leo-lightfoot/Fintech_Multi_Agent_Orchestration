@@ -1,5 +1,5 @@
 """FastAPI gateway for user requests."""
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
@@ -10,6 +10,7 @@ from src.utils.config import settings
 from src.utils.logging import configure_logging, get_logger
 from src.gateway.sanitizer import InputSanitizer
 from src.gateway.auth import AuthManager, TokenData
+from src.gateway.middleware import limiter, rate_limit_exceeded_handler, RateLimitExceededError
 from src.orchestrator.coordinator import TaskCoordinator
 from src.memory.redis_store import RedisStore
 
@@ -24,6 +25,10 @@ app = FastAPI(
     version="1.0.0",
     debug=settings.debug,
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceededError, rate_limit_exceeded_handler)
 
 # CORS -- localhost only for this learning project
 app.add_middleware(
@@ -104,7 +109,8 @@ async def get_current_user(
 
 # API Routes
 @app.get("/", response_model=HealthResponse)
-async def root():
+@limiter.limit("100/minute")
+async def root(request: Request):
     """Root endpoint with health check."""
     return HealthResponse(
         status="healthy",
@@ -115,10 +121,10 @@ async def root():
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+@limiter.limit("100/minute")
+async def health_check(request: Request):
     """Health check endpoint."""
     redis_ok = await redis_store.health_check()
-    
     return HealthResponse(
         status="healthy" if redis_ok else "degraded",
         version="1.0.0",
@@ -128,8 +134,10 @@ async def health_check():
 
 
 @app.post("/api/task", response_model=TaskResponse)
+@limiter.limit("20/minute")
 async def submit_task(
-    request: TaskRequest,
+    request: Request,
+    body: TaskRequest,
     current_user: Optional[TokenData] = Depends(get_current_user)
 ):
     """Submit a new task for processing.
@@ -143,8 +151,8 @@ async def submit_task(
     """
     try:
         # Sanitize input
-        sanitized_task = InputSanitizer.sanitize_text(request.task)
-        
+        sanitized_task = InputSanitizer.sanitize_text(body.task)
+
         # Check for injections
         is_safe, threats = InputSanitizer.check_for_injections(sanitized_task)
         if not is_safe:
@@ -157,17 +165,17 @@ async def submit_task(
                 status_code=400,
                 detail=f"Input rejected due to security concerns: {', '.join(threats)}"
             )
-        
+
         # Sanitize context if provided
         sanitized_context = None
-        if request.context:
-            sanitized_context = InputSanitizer.sanitize_dict(request.context)
-        
+        if body.context:
+            sanitized_context = InputSanitizer.sanitize_dict(body.context)
+
         # Generate IDs
         task_id = str(uuid.uuid4())
-        session_id = request.session_id or str(uuid.uuid4())
-        user_id = (current_user.user_id if current_user 
-                  else request.user_id or "anonymous")
+        session_id = body.session_id or str(uuid.uuid4())
+        user_id = (current_user.user_id if current_user
+                   else body.user_id or "anonymous")
         
         logger.info(
             "task_submitted",
@@ -201,7 +209,9 @@ async def submit_task(
 
 
 @app.get("/api/task/{task_id}", response_model=TaskStatusResponse)
+@limiter.limit("100/minute")
 async def get_task_status(
+    request: Request,
     task_id: str,
     current_user: Optional[TokenData] = Depends(get_current_user)
 ):
@@ -230,7 +240,9 @@ async def get_task_status(
 
 
 @app.get("/api/session/{session_id}")
+@limiter.limit("100/minute")
 async def get_session_history(
+    request: Request,
     session_id: str,
     current_user: Optional[TokenData] = Depends(get_current_user)
 ):
@@ -259,7 +271,9 @@ async def get_session_history(
 
 
 @app.get("/api/audit/{session_id}")
+@limiter.limit("100/minute")
 async def get_audit_log(
+    request: Request,
     session_id: str,
     limit: int = 100,
     current_user: Optional[TokenData] = Depends(get_current_user),
@@ -274,7 +288,8 @@ async def get_audit_log(
 
 
 @app.post("/api/auth/token")
-async def create_token(user_id: str, session_id: Optional[str] = None):
+@limiter.limit("10/minute")
+async def create_token(request: Request, user_id: str, session_id: Optional[str] = None):
     """Create an authentication token (demo endpoint).
     
     In production, this would require actual authentication.

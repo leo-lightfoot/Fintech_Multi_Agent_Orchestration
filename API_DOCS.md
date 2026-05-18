@@ -1,34 +1,56 @@
 # API Documentation
 
-## Multi-Agent Orchestration System API
-
 Base URL: `http://localhost:8000`
 
-### Authentication
+---
 
-Optional for demo purposes. In production, include Bearer token:
+## Authentication
+
+Optional for this learning project. Include a Bearer token if you have one:
 
 ```
 Authorization: Bearer <token>
 ```
 
-Get a token:
+Get a token (no password required in dev mode):
+
 ```bash
-curl -X POST http://localhost:8000/api/auth/token \
-  -d "user_id=your_user_id"
+curl -X POST "http://localhost:8000/api/auth/token?user_id=alice"
 ```
+
+Response:
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "session_id": "<uuid>"
+}
+```
+
+---
+
+## Rate Limits
+
+| Endpoint group | Limit |
+|---|---|
+| POST /api/task | 20 requests/minute per IP |
+| GET /api/task, /api/session, /api/audit | 100 requests/minute per IP |
+| POST /api/auth/token | 10 requests/minute per IP |
+
+Exceeding a limit returns HTTP 429.
 
 ---
 
 ## Endpoints
 
-### Health Check
+### Health check
 
 **GET** `/health`
 
-Check API health status.
+```bash
+curl http://localhost:8000/health
+```
 
-**Response:**
 ```json
 {
   "status": "healthy",
@@ -40,230 +62,183 @@ Check API health status.
 
 ---
 
-### Submit Task
+### Submit a task
 
 **POST** `/api/task`
 
-Submit a new task for processing.
+```bash
+curl -X POST http://localhost:8000/api/task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "What are the current NAV values for all funds?"}'
+```
 
-**Request Body:**
+Request body:
+
 ```json
 {
-  "task": "Build a REST API for user management with authentication",
-  "session_id": "optional-session-id",
-  "context": {
-    "framework": "FastAPI",
-    "database": "PostgreSQL"
-  },
-  "user_id": "optional-user-id"
+  "task": "string (required)",
+  "session_id": "string (optional -- omit to start a new session)",
+  "context": {"key": "value"},
+  "user_id": "string (optional)"
 }
 ```
 
-**Response:**
+Response:
+
 ```json
 {
-  "task_id": "uuid-here",
-  "session_id": "session-uuid",
+  "task_id": "<uuid>",
+  "session_id": "<uuid>",
   "status": "submitted",
   "message": "Task submitted successfully and is being processed"
 }
 ```
 
-**Example:**
-```bash
-curl -X POST http://localhost:8000/api/task \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Create a Python script to process CSV files",
-    "context": {"format": "pandas"}
-  }'
-```
-
 ---
 
-### Get Task Status
+### Poll task status
 
 **GET** `/api/task/{task_id}`
 
-Get the current status and progress of a task.
+```bash
+curl http://localhost:8000/api/task/<task_id>
+```
 
-**Response:**
+Response:
+
 ```json
 {
-  "task_id": "uuid-here",
-  "status": "executing",
-  "phase": "execution",
-  "progress": 0.6,
-  "result": null,
+  "task_id": "<uuid>",
+  "status": "completed",
+  "phase": "completed",
+  "progress": 1.0,
+  "intent": "data_query",
+  "agents_selected": ["data"],
+  "result": "## Results\n\n...",
   "error": null,
   "created_at": "2026-01-30T12:00:00Z",
-  "updated_at": "2026-01-30T12:05:00Z"
+  "updated_at": "2026-01-30T12:00:05Z"
 }
 ```
 
-**Status Values:**
-- `submitted`: Task received
-- `planning`: Creating execution plan
-- `executing`: Running tasks
-- `validating`: Validation in progress
-- `summarizing`: Generating summary
-- `completed`: Task completed
-- `failed`: Task failed
-- `retrying`: Retrying after validation failure
+Status values:
 
-**Example:**
-```bash
-curl http://localhost:8000/api/task/abc-123-def-456
-```
+| Value | Meaning |
+|---|---|
+| submitted | Task received, queued |
+| supervising | Supervisor classifying intent |
+| executing | Specialist agents running |
+| validating | Validator checking output |
+| retrying | Validation failed, one retry in progress |
+| completed | Done, result available |
+| failed | Could not complete |
 
 ---
 
-### Get Session History
+### Session history
 
 **GET** `/api/session/{session_id}`
 
-Retrieve all tasks and history for a session.
+```bash
+curl http://localhost:8000/api/session/<session_id>
+```
 
-**Response:**
 ```json
 {
-  "session_id": "session-uuid",
+  "session_id": "<uuid>",
   "task_count": 3,
   "history": [
     {
-      "task_id": "uuid-1",
-      "task": "Task description",
+      "task_id": "<uuid>",
+      "task": "What is the NAV for fund F001?",
       "status": "completed",
+      "intent": "data_query",
+      "agents": ["data"],
       "result": "...",
-      "completed_at": "2026-01-30T12:00:00Z",
-      "timestamp": "2026-01-30T12:00:00Z"
+      "completed_at": "2026-01-30T12:00:05Z"
     }
   ]
 }
 ```
 
-**Example:**
+---
+
+### Audit log
+
+**GET** `/api/audit/{session_id}?limit=100`
+
+Returns the append-only compliance log for a session -- every agent action.
+
 ```bash
-curl http://localhost:8000/api/session/my-session-id
+curl http://localhost:8000/api/audit/<session_id>
 ```
 
----
-
-## Error Responses
-
-**400 Bad Request:**
 ```json
 {
-  "detail": "Input rejected due to security concerns: potential_sql_injection"
+  "session_id": "<uuid>",
+  "count": 2,
+  "entries": [
+    {
+      "timestamp": "2026-01-30T12:00:03Z",
+      "task_id": "<uuid>",
+      "session_id": "<uuid>",
+      "user_id": "alice",
+      "role": "ops",
+      "action": "agent_executed",
+      "agent": "data",
+      "data_accessed": [],
+      "status": "success",
+      "result_summary": "Found 3 funds with NAV...",
+      "cost_usd": 0.0
+    }
+  ]
 }
 ```
 
-**404 Not Found:**
-```json
-{
-  "detail": "Task not found"
-}
-```
+---
 
-**500 Internal Server Error:**
-```json
-{
-  "detail": "Internal server error"
-}
-```
+## Error responses
+
+| Code | Meaning |
+|---|---|
+| 400 | Input failed security check |
+| 404 | Task or session not found |
+| 429 | Rate limit exceeded |
+| 500 | Internal server error |
 
 ---
 
-## Rate Limits
-
-- 100 requests per minute per IP
-- 10 concurrent tasks per session
-
----
-
-## WebSocket Support (Future)
-
-Real-time task progress updates will be available at:
-```
-ws://localhost:8000/ws/task/{task_id}
-```
-
----
-
-## Examples
-
-### Python Client
+## Python client example
 
 ```python
 import httpx
 import asyncio
 
-async def submit_task():
+async def run_task(task: str):
     async with httpx.AsyncClient() as client:
-        # Submit task
-        response = await client.post(
+        # Submit
+        r = await client.post(
             "http://localhost:8000/api/task",
-            json={
-                "task": "Build a user authentication system",
-                "context": {
-                    "technology": "JWT",
-                    "language": "Python"
-                }
-            }
+            json={"task": task}
         )
-        
-        data = response.json()
+        data = r.json()
         task_id = data["task_id"]
-        print(f"Task submitted: {task_id}")
-        
-        # Poll for completion
+        session_id = data["session_id"]
+        print(f"Submitted: {task_id}")
+
+        # Poll until done
         while True:
-            status_response = await client.get(
-                f"http://localhost:8000/api/task/{task_id}"
-            )
-            status = status_response.json()
-            
-            print(f"Progress: {status['progress']*100:.0f}%")
-            
-            if status["status"] in ["completed", "failed"]:
-                print(f"Final result: {status['result']}")
+            r = await client.get(f"http://localhost:8000/api/task/{task_id}")
+            s = r.json()
+            print(f"  {s['status']} ({s['progress']*100:.0f}%)")
+            if s["status"] in ("completed", "failed"):
+                print(s.get("result") or s.get("error"))
                 break
-            
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)
 
-asyncio.run(submit_task())
-```
+        # Audit log
+        r = await client.get(f"http://localhost:8000/api/audit/{session_id}")
+        print(f"Audit entries: {r.json()['count']}")
 
-### JavaScript Client
-
-```javascript
-async function submitTask() {
-  const response = await fetch('http://localhost:8000/api/task', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      task: 'Create a Node.js Express API',
-      context: { database: 'MongoDB' }
-    })
-  });
-  
-  const data = await response.json();
-  console.log('Task submitted:', data.task_id);
-  
-  // Poll for status
-  const taskId = data.task_id;
-  const interval = setInterval(async () => {
-    const statusResponse = await fetch(
-      `http://localhost:8000/api/task/${taskId}`
-    );
-    const status = await statusResponse.json();
-    
-    console.log(`Progress: ${status.progress * 100}%`);
-    
-    if (['completed', 'failed'].includes(status.status)) {
-      console.log('Result:', status.result);
-      clearInterval(interval);
-    }
-  }, 5000);
-}
+asyncio.run(run_task("What funds have breached their limits today?"))
 ```

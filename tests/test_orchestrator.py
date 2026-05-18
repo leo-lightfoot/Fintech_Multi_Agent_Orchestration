@@ -122,5 +122,103 @@ class TestSqlTool:
         assert "R004" in rule_ids
 
 
+class TestRedisStoreSerialisation:
+    """Tests for state serialisation/deserialisation without a live Redis connection."""
+
+    def _make_store(self):
+        """Return a RedisStore instance with the Redis client patched out."""
+        from unittest.mock import MagicMock
+        from src.memory.redis_store import RedisStore
+        store = object.__new__(RedisStore)   # bypass __init__ (avoids Redis connection)
+        store.redis = MagicMock()
+        return store
+
+    def test_round_trip_preserves_cost_tracking(self):
+        """CostTracking must come back as a CostTracking model, not a plain dict."""
+        from src.orchestrator.state import CostTracking, ValidationResult
+        from src.memory.redis_store import RedisStore
+
+        store = self._make_store()
+        state = create_initial_state(
+            task_id="t1", session_id="s1", user_id="u1", task="test"
+        )
+        state["cost_tracking"] = CostTracking(
+            budget_limit_usd=10.0,
+            total_cost_usd=2.5,
+            llm_calls=3,
+            tokens_used=1500,
+        )
+
+        serialised = store._serialize_state(state)
+        restored = store._deserialize_state(serialised)
+
+        ct = restored["cost_tracking"]
+        assert isinstance(ct, CostTracking), f"expected CostTracking, got {type(ct)}"
+        assert ct.total_cost_usd == 2.5
+        assert ct.llm_calls == 3
+        assert ct.within_budget() is True
+
+    def test_round_trip_preserves_validation_result(self):
+        """ValidationResult must come back as a ValidationResult model, not a dict."""
+        from src.orchestrator.state import ValidationResult
+        from src.memory.redis_store import RedisStore
+
+        store = self._make_store()
+        state = create_initial_state(
+            task_id="t2", session_id="s2", user_id="u2", task="test"
+        )
+        state["validation_result"] = ValidationResult(
+            approved=False,
+            severity="reject",
+            issues=["missing risk section", "no NAV data"],
+            feedback="incomplete output",
+        )
+
+        serialised = store._serialize_state(state)
+        restored = store._deserialize_state(serialised)
+
+        vr = restored["validation_result"]
+        assert isinstance(vr, ValidationResult), f"expected ValidationResult, got {type(vr)}"
+        assert vr.approved is False
+        assert vr.severity == "reject"
+        assert len(vr.issues) == 2
+
+    def test_round_trip_none_validation_result(self):
+        """None validation_result must deserialise back to None, not crash."""
+        from src.memory.redis_store import RedisStore
+
+        store = self._make_store()
+        state = create_initial_state(
+            task_id="t3", session_id="s3", user_id="u3", task="test"
+        )
+        assert state["validation_result"] is None
+
+        serialised = store._serialize_state(state)
+        restored = store._deserialize_state(serialised)
+
+        assert restored["validation_result"] is None
+
+    def test_round_trip_preserves_primitive_fields(self):
+        """task, user_id, progress, errors must all survive the round trip."""
+        from src.memory.redis_store import RedisStore
+
+        store = self._make_store()
+        state = create_initial_state(
+            task_id="t4", session_id="s4", user_id="alice", task="show me the funds"
+        )
+        state["progress"] = 0.65
+        state["errors"] = ["agent timed out"]
+        state["agents_selected"] = ["data", "risk"]
+
+        serialised = store._serialize_state(state)
+        restored = store._deserialize_state(serialised)
+
+        assert restored["user_id"] == "alice"
+        assert restored["task"] == "show me the funds"
+        assert restored["progress"] == 0.65
+        assert restored["errors"] == ["agent timed out"]
+        assert restored["agents_selected"] == ["data", "risk"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

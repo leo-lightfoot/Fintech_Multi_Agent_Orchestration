@@ -10,76 +10,61 @@ Stack: LangGraph + FastAPI + Redis + Provider-agnostic LLM
 
 ---
 
-## Phase 1 -- Skeleton (get something running end-to-end)
+## Phase 1 -- Skeleton [COMPLETE]
 
 ### 1.1 State & Orchestrator
 
-- [ ] Simplify `src/orchestrator/state.py` -- remove `ExecutionPlan`, `PlanStep`, `AgentType` models; add `intent: str`, `agents_selected: list[str]`, `agent_results: dict` to `OrchestratorState`; simplify `ValidationResult` (remove `critic_level` field -- only one validator now); update `Phase` and `TaskStatus` enums to match 6-node graph
-- [ ] Rewrite `src/orchestrator/graph.py` -- 6-node LangGraph graph: `receive -> supervise -> execute -> validate -> respond -> done`; replace all 8 current agent imports with the new supervisor + specialist agents
-- [ ] Add conditional retry edge from `validate` back to `execute` (max 1 retry); update default in `settings` from 3 -> 1
-- [ ] Update `src/orchestrator/coordinator.py` -- remove references to `execution_plan`, `expert_insights`, `step_results`; use new `agent_results` field
+- [x] Simplify `src/orchestrator/state.py`
+- [x] Rewrite `src/orchestrator/graph.py` -- 6-node supervisor graph
+- [x] Add retry node (read-only edge function + dedicated _retry_node)
+- [x] Update `src/orchestrator/coordinator.py`
 
-### 1.2 Config -- Update Before Anything Else
+### 1.2 Config
 
-> Do this first. Several other items depend on it. Skipping will cause startup failures.
+- [x] Update `src/utils/config.py`
+- [x] Update `.env.example`
+- [x] Update `docker-compose.yml`
 
-- [ ] Update `src/utils/config.py` -- make `openai_api_key` Optional (currently required -- will break startup if only Claude/Azure key is set); add `llm_provider: str = "openai"`, `llm_api_key: str`; add `db_host`, `db_port: int`, `db_name`, `db_user`, `db_password` fields; add `docs_path: str`, `vector_store_url: str`; remove `enable_code_execution`, `docker_enabled`, `code_execution_timeout` (no longer needed)
-- [ ] Update `.env.example` -- replace `OPENAI_API_KEY` with `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`; add `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; add `DOCS_PATH`, `VECTOR_STORE_URL`; remove `CODE_EXECUTION_TIMEOUT`, `ENABLE_CODE_EXECUTION`, `DOCKER_ENABLED`; keep `OPENAI_API_KEY` as a commented alias for backwards compat
-- [ ] Update `docker-compose.yml` -- change `OPENAI_API_KEY` env var to `LLM_PROVIDER` + `LLM_API_KEY`; add DB service if running locally; add vector store service (ChromaDB or pgvector) when chosen
+### 1.3 LLM Factory
 
-### 1.3 LLM Factory (provider abstraction)
+- [x] Create `src/utils/llm.py` -- `get_llm()` factory (anthropic / openai / azure_openai)
 
-- [ ] Create `src/utils/llm.py` -- `get_llm(provider, model, **kwargs)` factory returning a LangChain `BaseChatModel`
-- [ ] Support `anthropic`, `openai`, `azure_openai` as provider values driven by `LLM_PROVIDER` env var
-- [ ] Update all existing agents that accept `llm: ChatOpenAI` -- change type hint to `BaseChatModel`; remove `from langchain_openai import ChatOpenAI` imports; affected files: `graph.py`, `critics.py`, `pre_planner.py`, `plan_refiner.py`, `executor.py`, `summarizer.py`, `responder.py`, `domain_expert.py`
+### 1.4 Fix InputSanitizer
 
-### 1.4 Fix InputSanitizer (breaking for fintech use)
-
-> The current sanitizer blocks SQL keywords like SELECT, CREATE, ALTER, EXECUTE.
-> An ops user asking "select the top 10 funds by AUM" will get a 400 error. Fix before any other work.
-
-- [ ] Update `src/gateway/sanitizer.py` -- remove SQL keyword check from the main task/natural-language input path; SQL injection checks should only apply to raw query strings passed to `sql_tool`, not to user task descriptions
-- [ ] Keep command injection and XSS checks on all input paths -- those are still valid
-- [ ] Add a separate `validate_sql_param(text: str)` method for use inside `sql_tool` only
+- [x] `check_for_injections()` -- natural language, no SQL keywords blocked
+- [x] `validate_sql_query()` -- query structure (UNION, semicolons, DDL)
+- [x] `validate_sql_param()` -- raw parameter values
 
 ### 1.5 Supervisor Agent
 
-- [x] Create `src/agents/supervisor.py`
-- [x] Use structured output (Pydantic model) -- output `SupervisorDecision(agents: list[str], tools: list[str], reasoning: str)`
-- [x] Write system prompt covering the 4 use cases: portfolio Q&A, report generation, data queries, risk/compliance
-- [x] Map intent -> agent sequence (e.g. "risk report" -> `[data, risk, report]`)
-- [x] Add fallback for unrecognised intent -- return clear error, do not hallucinate a plan
+- [x] `src/agents/supervisor.py` -- structured output, 8 intent categories, sanitize fallback
 
 ### 1.6 DataAgent + SQL Tool
 
-- [ ] Create `src/agents/data.py` -- DataAgent that orchestrates tool calls
-- [ ] Create `src/tools/` directory and `src/tools/registry.py` -- central tool registration; agents declare which tools they use
-- [ ] Create `src/tools/sql.py` -- `sql_tool`: parameterized queries only (no raw string interpolation), returns typed results; use `validate_sql_param()` from sanitizer on all inputs
-- [ ] Write 2 tests: valid query returns structured data, SQL injection attempt is blocked
+- [x] `src/agents/data.py` -- tool-calling loop (up to 5 iterations)
+- [x] `src/tools/sql.py` -- SQLite placeholder DB, seeded with 5 fintech tables
+- [x] `src/tools/registry.py` -- central tool registry
+- [x] 4 tests passing (valid query, non-SELECT blocked, injection blocked, breached limits)
 
 ### 1.7 Audit Trail
 
-- [ ] Create `src/audit/trail.py` -- `AuditTrail` class with `log(entry: AuditEntry)` method
-- [ ] Define `AuditEntry` Pydantic model: `timestamp, user_id, session_id, task_id, action, data_accessed, agent, role, cost_usd, result_summary`
-- [ ] Store entries in Redis as append-only sorted set (score = timestamp)
-- [ ] Add `GET /api/audit/{session_id}` endpoint -- returns audit log for a session
-- [ ] Ensure every agent call writes an audit entry (wrap in orchestrator, not in each agent)
+- [x] `src/audit/trail.py` -- `AuditEntry` model + `AuditTrail` class
+- [x] Redis: `save_audit_entry()` / `get_audit_log()` (append-only, 90-day TTL)
+- [x] `GET /api/audit/{session_id}` endpoint
+- [x] Graph writes one entry per agent after every execution (success / stub / error)
 
-### 1.8 Gateway -- Rate Limiting (actually implement it)
+### 1.8 Rate Limiting
 
-- [ ] Add `slowapi` to `requirements.txt`
-- [ ] Create `src/gateway/middleware.py` -- rate limit: 100 req/min per user, 10 concurrent tasks per session
-- [ ] Wire middleware into `src/gateway/api.py`
-- [ ] Restrict CORS in `api.py` -- change `allow_origins=["*"]` to the internal domain(s) of your ops tooling
-- [ ] Remove documented-but-missing rate limit comments from `API_DOCS.md` and replace with real docs
+- [x] `src/gateway/middleware.py` -- slowapi limiter (20/min task, 100/min reads, 10/min auth)
+- [x] All routes decorated with `@limiter.limit()`
+- [x] CORS restricted to localhost
+- [x] `API_DOCS.md` rewritten with real rate limit table
 
-### 1.9 Redis Store -- Fix Deserialization
+### 1.9 Redis Deserialization
 
-> File is `src/memory/redis_store.py` -- not `store.py`
-
-- [ ] Fix `src/memory/redis_store.py` `_deserialize_state()` -- reconstruct Pydantic models properly, not plain dicts; the current implementation just returns `json.loads(state_json)` which loses all type safety
-- [ ] Add `save_audit_entry()` and `get_audit_log()` methods to `RedisStore`
-- [ ] Write 1 test: serialize -> deserialize round-trip preserves all model types
+- [x] `_deserialize_state()` reconstructs `CostTracking` and `ValidationResult` as Pydantic models
+- [x] `save_audit_entry()` / `get_audit_log()` added
+- [x] 4 round-trip tests: CostTracking, ValidationResult, None, primitive fields
 
 ---
 
