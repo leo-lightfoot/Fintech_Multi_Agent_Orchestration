@@ -1,4 +1,4 @@
-"""SQL tool — parameterized queries against a SQLite placeholder database.
+"""SQL tool -- parameterized queries against a SQLite placeholder database.
 
 The database is seeded in-memory with fake fintech data:
   funds, positions, trades, nav_history, limit_rules
@@ -16,7 +16,7 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Module-level singleton — kept alive for the process lifetime
+# Module-level singleton -- kept alive for the process lifetime
 _db: aiosqlite.Connection | None = None
 
 
@@ -154,8 +154,8 @@ async def execute_query(query: str) -> str:
         logger.warning("non_select_query_blocked", query_preview=query[:80])
         return json.dumps({"error": "Only SELECT queries are permitted."})
 
-    # Block the most dangerous SQL constructs even inside a SELECT
-    is_safe, threats = InputSanitizer.validate_sql_param(query)
+    # Block dangerous constructs inside the query (UNION, semicolons, DDL keywords)
+    is_safe, threats = InputSanitizer.validate_sql_query(query)
     if not is_safe:
         logger.warning("sql_injection_attempt_blocked", threats=threats)
         return json.dumps({"error": f"Query blocked: {', '.join(threats)}"})

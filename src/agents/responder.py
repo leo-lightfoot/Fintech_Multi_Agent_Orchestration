@@ -1,4 +1,4 @@
-"""Responder agent — formats agent results into a final markdown response."""
+"""Responder agent -- formats agent results into a final markdown response."""
 from typing import Dict, Any, Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -16,7 +16,7 @@ Guidelines:
 - Open with a one-sentence summary of what was done
 - Present data in markdown tables where appropriate
 - Flag any warnings, errors, or missing data clearly
-- Keep language plain and professional — no jargon
+- Keep language plain and professional -- no jargon
 - Do not invent data; if an agent returned no result, say so explicitly
 - End with a short "Next steps" section only if there are clear follow-up actions"""
 
@@ -37,7 +37,7 @@ class Responder:
 
         Args:
             task: The original user task.
-            results: Dict of agent_name → {status, result} from the execute node.
+            results: Dict of agent_name -> {status, result} from the execute node.
             summary: Optional pre-built summary (unused for now, reserved for future).
 
         Returns:

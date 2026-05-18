@@ -1,4 +1,4 @@
-"""Task coordinator — submits tasks to the graph and tracks active runs."""
+"""Task coordinator -- submits tasks to the graph and tracks active runs."""
 import asyncio
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -17,7 +17,7 @@ class TaskCoordinator:
 
     def __init__(self, redis_store: RedisStore):
         self.redis_store = redis_store
-        self.graph = OrchestrationGraph()
+        self.graph = OrchestrationGraph(redis_store=redis_store)
         self.active_tasks: Dict[str, asyncio.Task] = {}
 
     async def submit_task(

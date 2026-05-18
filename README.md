@@ -1,170 +1,154 @@
-# Multi-Agent Orchestration System
+# Fintech Multi-Agent Orchestrator
 
-A production-ready multi-agent orchestration platform with planning, execution, and validation phases. Built with LangGraph, FastAPI, and Redis.
+A learning project -- a supervisor-pattern multi-agent system built for a fintech
+solutions / ops team. Agents collaborate to answer portfolio questions, run data
+queries, flag risk breaches, and generate reports.
 
-## Architecture
+Stack: LangGraph + FastAPI + Redis + Anthropic Claude + SQLite (placeholder DB)
+
+---
+
+## How it works
 
 ```
-[User Input]
-      ↓
-[User Proxy / Gateway]  ← Handles session, auth, input sanitization
-      ↓
-[Coordinator / Orchestrator]  ← Central FSM brain (LangGraph state machine)
-      │
-      ├─► Defines goals, acceptance criteria, & spawns dynamic teams
-      │
-      ▼
-[Planning Phase]                  [Execution Phase]                  [Validation Phase]
-(Blue agents)                     (Green agents)                     (Orange agents – Rivals!)
-  ↓                                 ↓                                  ↓
-Pre-Planner → Plan Refiner        Executors → Data Writers           Critics (multiple levels)
-  │   Generate DAG / steps          │   Write & submit code/tasks      │   Review outputs
-  │                                 │   → Remote Code Executor          │   → Veto / Reject → Retry loop
-  └─────────────────────────────────┼────────────────────────────────────┘
-                                    │
-                                    ▼
-                          [Domain Experts / SMEs]  ← Provide specialized knowledge on-demand
-                                    │
-                                    ▼
-                          [Summarizers]  ← Clean & condense results
-                                    │
-                                    ▼
-                          [Responders]  ← Format final output
-                                    │
-                                    ▼
-[User Proxy / Gateway]  → Clean, audited response to user
-      ↑
-[Session Recovery / Memory]  ← Persists state across interruptions
+POST /api/task
+    |
+    v
+Supervisor Agent     -- classifies intent, picks specialist agents
+    |
+    v
+Specialist Agents    -- run in sequence, each receives previous output
+  data               -- SQL queries against the placeholder DB
+  portfolio          -- P&L, attribution, position analysis  (Phase 2)
+  risk               -- limit breaches, exposure flags        (Phase 2)
+  report             -- formats results into markdown         (Phase 2)
+    |
+    v
+Validator            -- single-pass check, one retry allowed  (Phase 2)
+    |
+    v
+Responder            -- formats final markdown response
+    |
+    v
+GET /api/task/{id}   -- poll for result
 ```
 
-## Features
+---
 
-- 🧠 **LangGraph FSM**: Sophisticated state machine for agent coordination
-- 🔒 **Security First**: Input sanitization, auth, and sandboxed code execution
-- 🔄 **Retry Logic**: Multi-level critics with veto power and automatic retries
-- 💾 **State Persistence**: Redis-backed session recovery for production reliability
-- 📊 **DAG Planning**: Parallel task execution where dependencies allow
-- 🎯 **Cost Control**: Budget limits and iteration caps prevent runaway costs
-- 📝 **Context Management**: Automatic summarization prevents context pollution
+## Project structure
 
-## Quick Start
+```
+src/
+  agents/
+    supervisor.py      intent classification and routing
+    data.py            SQL tool-calling agent
+    responder.py       final response formatter
+    validator.py       (Phase 2)
+    portfolio.py       (Phase 2)
+    risk.py            (Phase 2)
+    reports.py         (Phase 2)
+  audit/
+    trail.py           (Phase 2)
+  gateway/
+    api.py             FastAPI routes
+    auth.py            JWT auth
+    sanitizer.py       input sanitization
+  memory/
+    redis_store.py     task state + session history
+  orchestrator/
+    graph.py           LangGraph 6-node supervisor graph
+    state.py           OrchestratorState TypedDict
+    coordinator.py     task submission and tracking
+  tools/
+    sql.py             sql_query tool + SQLite placeholder DB
+    registry.py        tool registry
+  utils/
+    config.py          settings (pydantic-settings)
+    llm.py             provider-agnostic LLM factory
+    logging.py         structlog setup
+tests/
+  test_orchestrator.py
+```
 
-### Prerequisites
+---
 
-- Python 3.11+
-- Redis server
-- OpenAI API key (or compatible LLM provider)
+## Quick start
 
-### Installation
+Requirements: Python 3.11+, Redis
 
 ```bash
-# Clone the repository
-cd multi-agent-orchestrator
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
+# Copy and edit env file
 cp .env.example .env
-# Edit .env with your API keys and configuration
+# Set LLM_API_KEY to your Anthropic key
 
-# Start Redis (if not already running)
+# Start Redis
 redis-server
 
-# Run the server
+# Run the API
 python -m uvicorn src.gateway.api:app --reload
 ```
 
-### Usage
+---
+
+## API
 
 ```bash
 # Submit a task
 curl -X POST http://localhost:8000/api/task \
   -H "Content-Type: application/json" \
-  -d '{
-    "task": "Build a REST API for user management with authentication",
-    "session_id": "user-123"
-  }'
+  -d '{"task": "What are the current NAV values for all funds?"}'
 
-# Check task status
+# Poll for result
 curl http://localhost:8000/api/task/{task_id}
 
-# Get session history
+# Session history
 curl http://localhost:8000/api/session/{session_id}
+
+# Health check
+curl http://localhost:8000/health
 ```
 
-## Project Structure
-
-```
-multi-agent-orchestrator/
-├── src/
-│   ├── gateway/           # User Proxy & API
-│   │   ├── api.py
-│   │   ├── auth.py
-│   │   └── sanitizer.py
-│   ├── orchestrator/      # Coordinator & FSM
-│   │   ├── coordinator.py
-│   │   ├── state.py
-│   │   └── graph.py
-│   ├── agents/
-│   │   ├── planning/      # Blue agents
-│   │   │   ├── pre_planner.py
-│   │   │   └── plan_refiner.py
-│   │   ├── execution/     # Green agents
-│   │   │   ├── executor.py
-│   │   │   ├── data_writer.py
-│   │   │   └── code_executor.py
-│   │   ├── validation/    # Orange agents (Rivals)
-│   │   │   └── critics.py
-│   │   ├── experts/       # Domain SMEs
-│   │   │   └── domain_expert.py
-│   │   ├── summarizers/
-│   │   │   └── summarizer.py
-│   │   └── responders/
-│   │       └── responder.py
-│   ├── memory/            # Session & State
-│   │   ├── redis_store.py
-│   │   └── recovery.py
-│   └── utils/
-│       ├── config.py
-│       └── logging.py
-├── tests/
-├── requirements.txt
-├── .env.example
-└── README.md
-```
+---
 
 ## Configuration
 
-See `.env.example` for all configuration options:
+All settings are in `.env.example`. Key variables:
 
-- `OPENAI_API_KEY`: Your LLM provider API key
-- `REDIS_URL`: Redis connection string
-- `MAX_ITERATIONS`: Maximum retry loops (default: 3)
-- `BUDGET_LIMIT`: Maximum cost per task
-- `CODE_EXECUTION_TIMEOUT`: Sandbox timeout in seconds
+| Variable | Default | Description |
+|---|---|---|
+| LLM_PROVIDER | anthropic | anthropic, openai, or azure_openai |
+| LLM_API_KEY | (required) | your API key |
+| LLM_MODEL | claude-sonnet-4-6 | model name |
+| REDIS_URL | redis://localhost:6379/0 | Redis connection |
+| MAX_RETRY_ATTEMPTS | 1 | validation retry limit |
+| BUDGET_LIMIT_USD | 10.0 | max cost per task |
 
-## Development
+---
+
+## Placeholder database
+
+The SQL tool runs against an in-memory SQLite database seeded with fake data:
+
+- 3 funds (Alpha Growth, Beta Income, Gamma Balanced)
+- 9 positions across those funds
+- 5 trades
+- 7 NAV history records
+- 5 limit rules (2 currently breached)
+
+Swap `get_db()` in `src/tools/sql.py` for a real connection when ready.
+
+---
+
+## Running tests
 
 ```bash
-# Run tests
-pytest
-
-# Format code
-black src/
-ruff check src/ --fix
-
-# Type checking
-mypy src/
+pytest tests/ -v
 ```
 
-## Production Deployment
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for:
-- Docker containerization
-- Kubernetes deployment
-- Scaling strategies
-- Monitoring setup
+---
 
 ## License
 

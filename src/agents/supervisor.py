@@ -1,4 +1,4 @@
-"""Supervisor agent — classifies intent and selects the agent pipeline.
+"""Supervisor agent -- classifies intent and selects the agent pipeline.
 
 The supervisor is the first agent called after a task is received.
 It reads the task description and outputs a structured routing decision:
@@ -7,20 +7,20 @@ It reads the task description and outputs a structured routing decision:
   - a short reasoning string for audit/debugging
 
 Available agents (in dependency order):
-  data       — SQL queries, Excel reads, PDF search
-  portfolio  — P&L, attribution, position analysis (needs data first)
-  risk       — limit breaches, exposure, compliance flags (needs data first)
-  report     — formats structured results into a markdown report (runs last)
+  data       -- SQL queries, Excel reads, PDF search
+  portfolio  -- P&L, attribution, position analysis (needs data first)
+  risk       -- limit breaches, exposure, compliance flags (needs data first)
+  report     -- formats structured results into a markdown report (runs last)
 
 Routing map:
-  data_query         → [data]
-  portfolio_query    → [data, portfolio]
-  risk_compliance    → [data, risk]
-  report_generation  → [data, report]
-  portfolio_report   → [data, portfolio, report]
-  risk_report        → [data, risk, report]
-  full_analysis      → [data, portfolio, risk, report]
-  unknown            → [data]  (safe fallback)
+  data_query         -> [data]
+  portfolio_query    -> [data, portfolio]
+  risk_compliance    -> [data, risk]
+  report_generation  -> [data, report]
+  portfolio_report   -> [data, portfolio, report]
+  risk_report        -> [data, risk, report]
+  full_analysis      -> [data, portfolio, risk, report]
+  unknown            -> [data]  (safe fallback)
 """
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -48,14 +48,14 @@ Available intent categories and their agent pipelines:
 | portfolio_report    | data, portfolio, report        | Portfolio analysis presented as a formatted report   |
 | risk_report         | data, risk, report             | Risk analysis presented as a formatted report        |
 | full_analysis       | data, portfolio, risk, report  | Comprehensive analysis covering both portfolio & risk|
-| unknown             | data                           | Anything unclear — safe fallback                    |
+| unknown             | data                           | Anything unclear -- safe fallback                    |
 
 Rules:
-- Always include "data" as the first agent — it fetches the raw data every other agent needs
+- Always include "data" as the first agent -- it fetches the raw data every other agent needs
 - Only add "report" if the user explicitly wants a formatted report or document
 - Only add "portfolio" if P&L, attribution, positions, or NAV are involved
 - Only add "risk" if compliance, limits, exposure, or risk metrics are involved
-- Keep the pipeline as short as possible — do not add agents that aren't needed
+- Keep the pipeline as short as possible -- do not add agents that aren't needed
 - If genuinely unclear, use intent "unknown" with agents ["data"]
 
 Respond with the structured decision only. Do not add explanations outside the structured fields."""
@@ -80,10 +80,10 @@ class SupervisorDecision(BaseModel):
     )
 
 
-# Valid agent names — used to sanitize LLM output
+# Valid agent names -- used to sanitize LLM output
 VALID_AGENTS = {"data", "portfolio", "risk", "report"}
 
-# Canonical pipelines per intent — used as fallback if LLM returns wrong agents
+# Canonical pipelines per intent -- used as fallback if LLM returns wrong agents
 INTENT_PIPELINES: dict[str, list[str]] = {
     "data_query":        ["data"],
     "portfolio_query":   ["data", "portfolio"],
@@ -136,7 +136,7 @@ class Supervisor:
             decision = SupervisorDecision(
                 intent="unknown",
                 agents=["data"],
-                reasoning=f"Supervisor error — defaulting to data agent. ({exc})",
+                reasoning=f"Supervisor error -- defaulting to data agent. ({exc})",
             )
 
         logger.info(

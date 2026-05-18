@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     llm_model: str = "claude-sonnet-4-6"
     llm_temperature: float = 0.7
 
-    # Legacy alias — still accepted if someone has OPENAI_API_KEY in their .env
+    # Legacy alias -- still accepted if someone has OPENAI_API_KEY in their .env
     openai_api_key: Optional[str] = None
 
     # Redis Configuration
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Agent Configuration
-    max_retry_attempts: int = 1   # reduced from 3 — one retry is enough
+    max_retry_attempts: int = 1   # reduced from 3 -- one retry is enough
     budget_limit_usd: float = 10.0
     context_window_limit: int = 200000  # Claude's context window
 
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
 
-    # Database — placeholder SQLite by default, swap for real DWH in production
+    # Database -- placeholder SQLite by default, swap for real DWH in production
     db_host: str = ""
     db_port: int = 5432
     db_name: str = "fintech_placeholder"

@@ -25,7 +25,7 @@ app = FastAPI(
     debug=settings.debug,
 )
 
-# CORS — localhost only for this learning project
+# CORS -- localhost only for this learning project
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:8080", "http://127.0.0.1:3000"],
@@ -255,6 +255,21 @@ async def get_session_history(
         raise
     except Exception as e:
         logger.error("session_retrieval_failed", session_id=session_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/audit/{session_id}")
+async def get_audit_log(
+    session_id: str,
+    limit: int = 100,
+    current_user: Optional[TokenData] = Depends(get_current_user),
+):
+    """Return the audit log for a session -- every agent action recorded."""
+    try:
+        entries = await redis_store.get_audit_log(session_id, limit=limit)
+        return {"session_id": session_id, "count": len(entries), "entries": entries}
+    except Exception as e:
+        logger.error("audit_retrieval_failed", session_id=session_id, error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

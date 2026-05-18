@@ -16,7 +16,7 @@ class TestInputSanitizer:
         assert "Hello" in sanitized
 
     def test_natural_language_with_sql_words_is_allowed(self):
-        """Ops users say things like 'select the top funds' — must not be blocked."""
+        """Ops users say things like 'select the top funds' -- must not be blocked."""
         task = "Select the top 10 funds by AUM and create a report"
         is_safe, threats = InputSanitizer.check_for_injections(task)
         assert is_safe

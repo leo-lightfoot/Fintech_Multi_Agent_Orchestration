@@ -1,8 +1,8 @@
-"""DataAgent — fetches data from the fintech database using tool calls.
+"""DataAgent -- fetches data from the fintech database using tool calls.
 
 The agent runs a standard tool-calling loop:
   1. Send task to LLM (with sql_query tool bound)
-  2. LLM returns tool calls → execute them → append results
+  2. LLM returns tool calls -> execute them -> append results
   3. Repeat until LLM responds with no tool calls (or MAX_ITERATIONS reached)
   4. Return the final structured response
 
@@ -39,8 +39,8 @@ Database tables available:
 Fund IDs: F001 (Alpha Growth), F002 (Beta Income), F003 (Gamma Balanced).
 
 Rules:
-- Only fetch what is needed for the request — do not over-query
-- If a query returns no rows say so clearly — do not invent data
+- Only fetch what is needed for the request -- do not over-query
+- If a query returns no rows say so clearly -- do not invent data
 - Summarise the retrieved data in plain text after fetching it
 - breached=1 in limit_rules means the limit has been violated"""
 
@@ -77,7 +77,7 @@ class DataAgent:
         user_content = task
         if validation_feedback:
             user_content += (
-                "\n\nNote — previous attempt was rejected. Please address these issues:\n"
+                "\n\nNote -- previous attempt was rejected. Please address these issues:\n"
                 + "\n".join(f"- {i}" for i in validation_feedback)
             )
         if context:
@@ -94,7 +94,7 @@ class DataAgent:
             messages.append(response)
 
             if not response.tool_calls:
-                # LLM is done — return its final text
+                # LLM is done -- return its final text
                 logger.info("data_agent_done", iterations=iteration + 1)
                 return response.content
 
@@ -105,7 +105,7 @@ class DataAgent:
                     ToolMessage(content=result, tool_call_id=call["id"])
                 )
 
-        # Fallback if we hit the iteration cap — ask for a plain summary
+        # Fallback if we hit the iteration cap -- ask for a plain summary
         logger.warning("data_agent_max_iterations_reached")
         messages.append(HumanMessage(content="Summarise the data you have retrieved so far."))
         final = await self.llm_plain.ainvoke(messages)

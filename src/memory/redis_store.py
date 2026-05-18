@@ -120,6 +120,33 @@ class RedisStore:
             logger.error("session_history_retrieval_failed", session_id=session_id, error=str(exc))
             return {"session_id": session_id, "task_count": 0, "history": [], "error": str(exc)}
 
+    # ------------------------------------------------------------------
+    # Audit log
+    # ------------------------------------------------------------------
+
+    async def save_audit_entry(self, session_id: str, entry: dict) -> None:
+        """Append one audit entry to the session log (sorted set, score = timestamp)."""
+        try:
+            import json as _json
+            from datetime import timezone as _tz
+            key = f"audit:{session_id}"
+            score = datetime.now(_tz.utc).timestamp()
+            await self.redis.zadd(key, {_json.dumps(entry, default=str): score})
+            # Audit log kept for 90 days
+            await self.redis.expire(key, timedelta(days=90))
+        except Exception as exc:
+            logger.error("audit_save_failed", session_id=session_id, error=str(exc))
+
+    async def get_audit_log(self, session_id: str, limit: int = 200) -> list[dict]:
+        """Return up to `limit` audit entries for a session, newest first."""
+        try:
+            import json as _json
+            raw = await self.redis.zrevrange(f"audit:{session_id}", 0, limit - 1)
+            return [_json.loads(r) for r in raw]
+        except Exception as exc:
+            logger.error("audit_read_failed", session_id=session_id, error=str(exc))
+            return []
+
     async def close(self):
         if self.redis:
             await self.redis.close()
@@ -146,7 +173,7 @@ class RedisStore:
         """Reconstruct OrchestratorState from JSON, restoring Pydantic models."""
         data: dict = json.loads(state_json)
 
-        # Reconstruct CostTracking — coordinator calls .within_budget() on it
+        # Reconstruct CostTracking -- coordinator calls .within_budget() on it
         if isinstance(data.get("cost_tracking"), dict):
             data["cost_tracking"] = CostTracking(**data["cost_tracking"])
 

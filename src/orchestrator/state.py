@@ -59,14 +59,14 @@ class OrchestratorState(TypedDict):
     # Lifecycle
     phase: Phase
     status: TaskStatus
-    progress: float          # 0.0 → 1.0
+    progress: float          # 0.0 -> 1.0
 
     # Supervisor outputs
     intent: Optional[str]                  # classified intent label
     agents_selected: List[str]             # e.g. ["data", "risk", "report"]
 
     # Execution outputs
-    agent_results: Dict[str, Any]          # agent_name → result dict
+    agent_results: Dict[str, Any]          # agent_name -> result dict
 
     # Validation
     validation_result: Optional[ValidationResult]

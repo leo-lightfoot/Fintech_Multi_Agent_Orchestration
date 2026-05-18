@@ -1,4 +1,4 @@
-"""Tool registry — maps agent names to the tools they are allowed to use.
+"""Tool registry -- maps agent names to the tools they are allowed to use.
 
 Adding a new tool:
   1. Import it here

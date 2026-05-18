@@ -1,8 +1,8 @@
-"""LangGraph orchestration graph — supervisor pattern.
+"""LangGraph orchestration graph -- supervisor pattern.
 
 Node flow:
-    receive → supervise → execute → validate → respond → done
-                              ↑________↑  (one retry on validation reject)
+    receive -> supervise -> execute -> validate -> respond -> done
+                              ^________^  (one retry on validation reject)
 
 Agents are imported lazily so stub files can be added one at a time
 without breaking the graph during development.
@@ -16,6 +16,7 @@ from src.orchestrator.state import (
     TaskStatus,
     ValidationResult,
 )
+from src.audit.trail import AuditTrail, AuditEntry
 from src.utils.llm import get_llm
 from src.utils.config import settings
 from src.utils.logging import get_logger
@@ -26,8 +27,9 @@ logger = get_logger(__name__)
 class OrchestrationGraph:
     """Supervisor-pattern LangGraph orchestration system."""
 
-    def __init__(self):
+    def __init__(self, redis_store=None):
         self.llm: BaseChatModel = get_llm()
+        self.audit = AuditTrail(redis_store)
         self.graph = self._build_graph()
 
     # ------------------------------------------------------------------
@@ -91,7 +93,7 @@ class OrchestrationGraph:
             state["intent"] = decision.intent
             state["agents_selected"] = decision.agents
         except ImportError:
-            # Supervisor not yet built — default routing for development
+            # Supervisor not yet built -- default routing for development
             logger.warning("supervisor_not_found_using_default_routing")
             state["intent"] = "general"
             state["agents_selected"] = ["data"]
@@ -138,16 +140,45 @@ class OrchestrationGraph:
                 if hasattr(result, "usage_metadata"):
                     self._update_cost(state["cost_tracking"], result.usage_metadata)
 
+                await self.audit.log(AuditEntry(
+                    task_id=state["task_id"],
+                    session_id=state["session_id"],
+                    user_id=state["user_id"],
+                    action="agent_executed",
+                    agent=agent_name,
+                    status="success",
+                    result_summary=str(result)[:200],
+                    cost_usd=state["cost_tracking"].total_cost_usd,
+                ))
+
             except ImportError:
                 logger.warning("agent_not_found_using_stub", agent=agent_name)
                 agent_results[agent_name] = {
                     "status": "stub",
                     "result": f"[{agent_name} agent not yet implemented]",
                 }
+                await self.audit.log(AuditEntry(
+                    task_id=state["task_id"],
+                    session_id=state["session_id"],
+                    user_id=state["user_id"],
+                    action="agent_executed",
+                    agent=agent_name,
+                    status="stub",
+                    result_summary=f"{agent_name} not yet implemented",
+                ))
             except Exception as exc:
                 logger.error("agent_execution_failed", agent=agent_name, error=str(exc))
                 agent_results[agent_name] = {"status": "error", "error": str(exc)}
                 state["errors"].append(f"{agent_name}: {exc}")
+                await self.audit.log(AuditEntry(
+                    task_id=state["task_id"],
+                    session_id=state["session_id"],
+                    user_id=state["user_id"],
+                    action="agent_executed",
+                    agent=agent_name,
+                    status="error",
+                    result_summary=str(exc)[:200],
+                ))
 
         state["agent_results"] = agent_results
         state["progress"] = 0.65
@@ -222,7 +253,7 @@ class OrchestrationGraph:
     # ------------------------------------------------------------------
 
     def _route_after_validation(self, state: OrchestratorState) -> str:
-        """Read-only routing function — must not mutate state."""
+        """Read-only routing function -- must not mutate state."""
         result = state.get("validation_result")
 
         if result and result.approved:

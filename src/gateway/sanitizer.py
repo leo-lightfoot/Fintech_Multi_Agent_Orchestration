@@ -20,10 +20,10 @@ logger = get_logger(__name__)
 class InputSanitizer:
     """Sanitizes user input to prevent injection attacks."""
 
-    # Shell / OS command injection — still dangerous in natural language context
+    # Shell / OS command injection -- still dangerous in natural language context
     COMMAND_INJECTION_PATTERN = re.compile(r"[;&|`$(){}[\]<>]")
 
-    # SQL keywords — only used when validating raw query parameters, NOT task text
+    # SQL keywords -- only used when validating raw query parameters, NOT task text
     SQL_INJECTION_PATTERN = re.compile(
         r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|TRUNCATE)\b",
         re.IGNORECASE,
@@ -35,7 +35,7 @@ class InputSanitizer:
     def sanitize_text(cls, text: str, allow_html: bool = False) -> str:
         """Sanitize a text string: trim length, strip null bytes, escape HTML.
 
-        Safe for natural language — does not reject SQL vocabulary.
+        Safe for natural language -- does not reject SQL vocabulary.
         """
         if not isinstance(text, str):
             text = str(text)
@@ -62,7 +62,7 @@ class InputSanitizer:
         """Check a natural-language task description for threats.
 
         Detects shell/command injection and XSS only.
-        SQL keywords are intentionally NOT flagged here — ops users write
+        SQL keywords are intentionally NOT flagged here -- ops users write
         phrases like "select funds", "create a report", "drop the date filter".
 
         Returns:
@@ -81,6 +81,38 @@ class InputSanitizer:
                 threats=threats,
                 input_preview=text[:100],
             )
+
+        return is_safe, threats
+
+    # Patterns dangerous inside an otherwise-valid SELECT query
+    DANGEROUS_QUERY_PATTERN = re.compile(
+        r"(;|UNION\s+SELECT|--|\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b"
+        r"|\bEXEC\b|\bEXECUTE\b|\bTRUNCATE\b|\bALTER\b|/\*)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def validate_sql_query(cls, query: str) -> tuple[bool, list[str]]:
+        """Validate a SQL query string for dangerous constructs.
+
+        Allows normal SELECT syntax (WHERE, JOIN, ORDER BY, GROUP BY, etc.)
+        but blocks multi-statement injection, UNION attacks, and DDL/DML keywords
+        that have no place inside a SELECT.
+
+        Returns:
+            (is_safe, list of detected threat labels)
+        """
+        threats: list[str] = []
+
+        if cls.DANGEROUS_QUERY_PATTERN.search(query):
+            threats.append("potential_sql_injection")
+
+        if cls.COMMAND_INJECTION_PATTERN.search(query):
+            threats.append("potential_command_injection")
+
+        is_safe = len(threats) == 0
+        if not is_safe:
+            logger.warning("sql_query_injection_detected", threats=threats, query_preview=query[:100])
 
         return is_safe, threats
 
