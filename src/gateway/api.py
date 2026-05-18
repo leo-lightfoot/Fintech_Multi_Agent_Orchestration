@@ -19,16 +19,16 @@ logger = get_logger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Multi-Agent Orchestration API",
-    description="Production-ready multi-agent system with planning, execution, and validation",
+    title="Fintech Multi-Agent Orchestrator",
+    description="Supervisor-pattern multi-agent system for fintech solutions teams",
     version="1.0.0",
-    debug=settings.debug
+    debug=settings.debug,
 )
 
-# CORS middleware
+# CORS — localhost only for this learning project
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["http://localhost:3000", "http://localhost:8080", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

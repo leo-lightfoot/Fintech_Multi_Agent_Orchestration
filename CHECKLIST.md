@@ -44,11 +44,11 @@ Stack: LangGraph + FastAPI + Redis + Provider-agnostic LLM
 
 ### 1.5 Supervisor Agent
 
-- [ ] Create `src/agents/supervisor.py`
-- [ ] Use structured output (Pydantic model) — output `SupervisorDecision(agents: list[str], tools: list[str], reasoning: str)`
-- [ ] Write system prompt covering the 4 use cases: portfolio Q&A, report generation, data queries, risk/compliance
-- [ ] Map intent → agent sequence (e.g. "risk report" → `[data, risk, report]`)
-- [ ] Add fallback for unrecognised intent — return clear error, do not hallucinate a plan
+- [x] Create `src/agents/supervisor.py`
+- [x] Use structured output (Pydantic model) — output `SupervisorDecision(agents: list[str], tools: list[str], reasoning: str)`
+- [x] Write system prompt covering the 4 use cases: portfolio Q&A, report generation, data queries, risk/compliance
+- [x] Map intent → agent sequence (e.g. "risk report" → `[data, risk, report]`)
+- [x] Add fallback for unrecognised intent — return clear error, do not hallucinate a plan
 
 ### 1.6 DataAgent + SQL Tool
 

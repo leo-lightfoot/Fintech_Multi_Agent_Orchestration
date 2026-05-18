@@ -54,11 +54,13 @@ class OrchestrationGraph:
             self._route_after_validation,
             {
                 "approved": "respond",
-                "retry":    "execute",
+                "retry":    "retry",
                 "failed":   "fail",
             },
         )
 
+        workflow.add_node("retry", self._retry_node)
+        workflow.add_edge("retry", "execute")
         workflow.add_edge("respond", END)
         workflow.add_edge("fail", END)
 
@@ -183,7 +185,7 @@ class OrchestrationGraph:
         state["progress"] = 0.90
 
         try:
-            from src.agents.responders.responder import Responder
+            from src.agents.responder import Responder
             responder = Responder(self.llm)
             response = await responder.format_response(
                 task=state["task"],
@@ -220,6 +222,7 @@ class OrchestrationGraph:
     # ------------------------------------------------------------------
 
     def _route_after_validation(self, state: OrchestratorState) -> str:
+        """Read-only routing function — must not mutate state."""
         result = state.get("validation_result")
 
         if result and result.approved:
@@ -233,10 +236,14 @@ class OrchestrationGraph:
             logger.warning("budget_exceeded", task_id=state["task_id"])
             return "failed"
 
+        return "retry"
+
+    async def _retry_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Increment retry counter and reset status before re-entering execute."""
         state["retry_count"] += 1
         state["status"] = TaskStatus.RETRYING
         logger.info("retrying", task_id=state["task_id"], attempt=state["retry_count"])
-        return "retry"
+        return state
 
     # ------------------------------------------------------------------
     # Helpers

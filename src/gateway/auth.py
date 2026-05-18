@@ -2,19 +2,13 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# JWT settings
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
 class TokenData(BaseModel):
@@ -25,17 +19,7 @@ class TokenData(BaseModel):
 
 
 class AuthManager:
-    """Handles authentication and authorization."""
-    
-    @staticmethod
-    def verify_password(plain_password: str, hashed_password: str) -> bool:
-        """Verify a password against a hash."""
-        return pwd_context.verify(plain_password, hashed_password)
-    
-    @staticmethod
-    def get_password_hash(password: str) -> str:
-        """Hash a password."""
-        return pwd_context.hash(password)
+    """Handles JWT token creation and verification."""
     
     @staticmethod
     def create_access_token(
