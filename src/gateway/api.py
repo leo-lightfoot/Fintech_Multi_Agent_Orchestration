@@ -62,6 +62,8 @@ class TaskStatusResponse(BaseModel):
     status: str
     phase: str
     progress: float
+    intent: Optional[str] = None
+    agents_selected: list = []
     result: Optional[Any] = None
     error: Optional[str] = None
     created_at: datetime

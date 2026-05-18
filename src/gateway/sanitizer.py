@@ -1,4 +1,13 @@
-"""Input sanitization utilities."""
+"""Input sanitization utilities.
+
+Two separate concerns:
+  - check_for_injections()  : safe for natural-language task descriptions.
+                              Only checks for shell/XSS threats, NOT SQL keywords,
+                              because ops users legitimately say things like
+                              "select the top 10 funds" or "create a report".
+  - validate_sql_param()    : strict check for raw strings that will be used
+                              inside a database query.
+"""
 import re
 from typing import Any, Dict
 import html
@@ -10,101 +19,108 @@ logger = get_logger(__name__)
 
 class InputSanitizer:
     """Sanitizes user input to prevent injection attacks."""
-    
-    # Patterns to detect potential threats
+
+    # Shell / OS command injection — still dangerous in natural language context
+    COMMAND_INJECTION_PATTERN = re.compile(r"[;&|`$(){}[\]<>]")
+
+    # SQL keywords — only used when validating raw query parameters, NOT task text
     SQL_INJECTION_PATTERN = re.compile(
-        r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE)\b)",
-        re.IGNORECASE
+        r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|TRUNCATE)\b",
+        re.IGNORECASE,
     )
-    
-    COMMAND_INJECTION_PATTERN = re.compile(
-        r"[;&|`$(){}[\]<>]"
-    )
-    
-    MAX_INPUT_LENGTH = 50000
-    
+
+    MAX_INPUT_LENGTH = 50_000
+
     @classmethod
     def sanitize_text(cls, text: str, allow_html: bool = False) -> str:
-        """Sanitize text input.
-        
-        Args:
-            text: Raw input text
-            allow_html: Whether to allow safe HTML tags
-            
-        Returns:
-            Sanitized text
+        """Sanitize a text string: trim length, strip null bytes, escape HTML.
+
+        Safe for natural language — does not reject SQL vocabulary.
         """
         if not isinstance(text, str):
             text = str(text)
-        
-        # Check length
+
         if len(text) > cls.MAX_INPUT_LENGTH:
-            logger.warning(
-                "input_too_long",
-                length=len(text),
-                max_length=cls.MAX_INPUT_LENGTH
-            )
-            text = text[:cls.MAX_INPUT_LENGTH]
-        
-        # Remove null bytes
-        text = text.replace('\x00', '')
-        
+            logger.warning("input_too_long", length=len(text), max_length=cls.MAX_INPUT_LENGTH)
+            text = text[: cls.MAX_INPUT_LENGTH]
+
+        text = text.replace("\x00", "")
+
         if allow_html:
-            # Allow only safe HTML tags
             text = bleach.clean(
                 text,
-                tags=['p', 'br', 'strong', 'em', 'u', 'code', 'pre'],
-                strip=True
+                tags=["p", "br", "strong", "em", "u", "code", "pre"],
+                strip=True,
             )
         else:
-            # Escape HTML
             text = html.escape(text)
-        
+
         return text.strip()
-    
+
     @classmethod
     def check_for_injections(cls, text: str) -> tuple[bool, list[str]]:
-        """Check for potential injection attacks.
-        
+        """Check a natural-language task description for threats.
+
+        Detects shell/command injection and XSS only.
+        SQL keywords are intentionally NOT flagged here — ops users write
+        phrases like "select funds", "create a report", "drop the date filter".
+
         Returns:
-            (is_safe, list of detected threats)
+            (is_safe, list of detected threat labels)
         """
-        threats = []
-        
-        if cls.SQL_INJECTION_PATTERN.search(text):
-            threats.append("potential_sql_injection")
-        
+        threats: list[str] = []
+
         if cls.COMMAND_INJECTION_PATTERN.search(text):
             threats.append("potential_command_injection")
-        
+
         is_safe = len(threats) == 0
-        
+
         if not is_safe:
             logger.warning(
                 "injection_attempt_detected",
                 threats=threats,
-                input_preview=text[:100]
+                input_preview=text[:100],
             )
-        
+
         return is_safe, threats
-    
+
+    @classmethod
+    def validate_sql_param(cls, value: str) -> tuple[bool, list[str]]:
+        """Strict check for a string that will be interpolated into a SQL query.
+
+        Use this inside sql_tool before passing any user-supplied value to the DB.
+        Checks both SQL keywords AND command injection characters.
+
+        Returns:
+            (is_safe, list of detected threat labels)
+        """
+        threats: list[str] = []
+
+        if cls.SQL_INJECTION_PATTERN.search(value):
+            threats.append("potential_sql_injection")
+
+        if cls.COMMAND_INJECTION_PATTERN.search(value):
+            threats.append("potential_command_injection")
+
+        is_safe = len(threats) == 0
+
+        if not is_safe:
+            logger.warning(
+                "sql_param_injection_detected",
+                threats=threats,
+                value_preview=value[:100],
+            )
+
+        return is_safe, threats
+
     @classmethod
     def sanitize_dict(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively sanitize dictionary values.
-        
-        Args:
-            data: Dictionary with potentially unsafe values
-            
-        Returns:
-            Sanitized dictionary
-        """
-        sanitized = {}
-        
+        """Recursively sanitize dictionary values (used for the context payload)."""
+        sanitized: Dict[str, Any] = {}
+
         for key, value in data.items():
-            # Sanitize keys
             safe_key = cls.sanitize_text(str(key), allow_html=False)
-            
-            # Sanitize values
+
             if isinstance(value, str):
                 sanitized[safe_key] = cls.sanitize_text(value, allow_html=False)
             elif isinstance(value, dict):
@@ -118,5 +134,5 @@ class InputSanitizer:
                 ]
             else:
                 sanitized[safe_key] = value
-        
+
         return sanitized

@@ -1,21 +1,22 @@
-"""LangGraph-based orchestrator graph definition."""
-from typing import Dict, Any
+"""LangGraph orchestration graph — supervisor pattern.
+
+Node flow:
+    receive → supervise → execute → validate → respond → done
+                              ↑________↑  (one retry on validation reject)
+
+Agents are imported lazily so stub files can be added one at a time
+without breaking the graph during development.
+"""
+from langchain_core.language_models import BaseChatModel
 from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
 
 from src.orchestrator.state import (
     OrchestratorState,
     Phase,
     TaskStatus,
-    create_initial_state
+    ValidationResult,
 )
-from src.agents.planning.pre_planner import PrePlanner
-from src.agents.planning.plan_refiner import PlanRefiner
-from src.agents.execution.executor import Executor
-from src.agents.validation.critics import CriticAgent
-from src.agents.experts.domain_expert import DomainExpert
-from src.agents.summarizers.summarizer import Summarizer
-from src.agents.responders.responder import Responder
+from src.utils.llm import get_llm
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
@@ -23,310 +24,261 @@ logger = get_logger(__name__)
 
 
 class OrchestrationGraph:
-    """LangGraph-based orchestration system."""
-    
+    """Supervisor-pattern LangGraph orchestration system."""
+
     def __init__(self):
-        """Initialize the orchestration graph."""
-        self.llm = ChatOpenAI(
-            model=settings.openai_model,
-            temperature=settings.openai_temperature,
-            api_key=settings.openai_api_key
-        )
-        
-        # Initialize agents
-        self.pre_planner = PrePlanner(self.llm)
-        self.plan_refiner = PlanRefiner(self.llm)
-        self.executor = Executor(self.llm)
-        self.critic = CriticAgent(self.llm)
-        self.domain_expert = DomainExpert(self.llm)
-        self.summarizer = Summarizer(self.llm)
-        self.responder = Responder(self.llm)
-        
-        # Build the graph
+        self.llm: BaseChatModel = get_llm()
         self.graph = self._build_graph()
-    
-    def _build_graph(self) -> StateGraph:
-        """Build the LangGraph state machine.
-        
-        Returns:
-            Compiled state graph
-        """
-        # Create the graph
+
+    # ------------------------------------------------------------------
+    # Graph construction
+    # ------------------------------------------------------------------
+
+    def _build_graph(self):
         workflow = StateGraph(OrchestratorState)
-        
-        # Add nodes
-        workflow.add_node("initialize", self._initialize_node)
-        workflow.add_node("plan", self._plan_node)
-        workflow.add_node("refine_plan", self._refine_plan_node)
+
+        workflow.add_node("receive", self._receive_node)
+        workflow.add_node("supervise", self._supervise_node)
         workflow.add_node("execute", self._execute_node)
         workflow.add_node("validate", self._validate_node)
-        workflow.add_node("get_expert_input", self._expert_node)
-        workflow.add_node("summarize", self._summarize_node)
         workflow.add_node("respond", self._respond_node)
-        workflow.add_node("handle_retry", self._retry_node)
-        workflow.add_node("handle_failure", self._failure_node)
-        
-        # Set entry point
-        workflow.set_entry_point("initialize")
-        
-        # Add edges
-        workflow.add_edge("initialize", "plan")
-        workflow.add_edge("plan", "refine_plan")
-        
-        # Conditional: Check if we need expert input
-        workflow.add_conditional_edges(
-            "refine_plan",
-            self._should_get_expert_input,
-            {
-                "expert": "get_expert_input",
-                "execute": "execute"
-            }
-        )
-        
-        workflow.add_edge("get_expert_input", "execute")
+        workflow.add_node("fail", self._fail_node)
+
+        workflow.set_entry_point("receive")
+        workflow.add_edge("receive", "supervise")
+        workflow.add_edge("supervise", "execute")
         workflow.add_edge("execute", "validate")
-        
-        # Conditional: Validation results
+
         workflow.add_conditional_edges(
             "validate",
-            self._check_validation_result,
+            self._route_after_validation,
             {
-                "approved": "summarize",
-                "retry": "handle_retry",
-                "failed": "handle_failure"
-            }
+                "approved": "respond",
+                "retry":    "execute",
+                "failed":   "fail",
+            },
         )
-        
-        workflow.add_edge("handle_retry", "execute")
-        workflow.add_edge("summarize", "respond")
+
         workflow.add_edge("respond", END)
-        workflow.add_edge("handle_failure", END)
-        
-        # Compile
+        workflow.add_edge("fail", END)
+
         return workflow.compile()
-    
-    # Node implementations
-    async def _initialize_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Initialize the task."""
-        logger.info("node_initialize", task_id=state["task_id"])
-        
+
+    # ------------------------------------------------------------------
+    # Nodes
+    # ------------------------------------------------------------------
+
+    async def _receive_node(self, state: OrchestratorState) -> OrchestratorState:
+        logger.info("node_receive", task_id=state["task_id"])
         state["phase"] = Phase.INIT
         state["status"] = TaskStatus.SUBMITTED
         state["progress"] = 0.05
-        
         return state
-    
-    async def _plan_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Generate initial plan."""
-        logger.info("node_plan", task_id=state["task_id"])
-        
-        state["phase"] = Phase.PLANNING
-        state["status"] = TaskStatus.PLANNING
-        state["progress"] = 0.1
-        
-        # Generate plan
-        plan = await self.pre_planner.create_plan(state["task"], state.get("context"))
-        state["execution_plan"] = plan
-        
-        return state
-    
-    async def _refine_plan_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Refine the execution plan."""
-        logger.info("node_refine_plan", task_id=state["task_id"])
-        
-        state["progress"] = 0.2
-        
-        # Refine plan
-        refined_plan = await self.plan_refiner.refine_plan(
-            state["execution_plan"],
-            state["task"]
+
+    async def _supervise_node(self, state: OrchestratorState) -> OrchestratorState:
+        """Classify intent and choose which specialist agents to run."""
+        logger.info("node_supervise", task_id=state["task_id"])
+        state["phase"] = Phase.SUPERVISING
+        state["status"] = TaskStatus.SUPERVISING
+        state["progress"] = 0.15
+
+        try:
+            from src.agents.supervisor import Supervisor
+            supervisor = Supervisor(self.llm)
+            decision = await supervisor.decide(state["task"], state.get("context"))
+            state["intent"] = decision.intent
+            state["agents_selected"] = decision.agents
+        except ImportError:
+            # Supervisor not yet built — default routing for development
+            logger.warning("supervisor_not_found_using_default_routing")
+            state["intent"] = "general"
+            state["agents_selected"] = ["data"]
+
+        logger.info(
+            "supervision_complete",
+            task_id=state["task_id"],
+            intent=state["intent"],
+            agents=state["agents_selected"],
         )
-        state["execution_plan"] = refined_plan
-        
         return state
-    
+
     async def _execute_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Execute the plan."""
-        logger.info("node_execute", task_id=state["task_id"])
-        
-        state["phase"] = Phase.EXECUTION
+        """Run each selected agent in sequence, passing results forward."""
+        logger.info(
+            "node_execute",
+            task_id=state["task_id"],
+            agents=state["agents_selected"],
+            retry=state["retry_count"],
+        )
+        state["phase"] = Phase.EXECUTING
         state["status"] = TaskStatus.EXECUTING
-        state["progress"] = 0.4
-        
-        # Execute steps
-        results = await self.executor.execute_plan(
-            state["execution_plan"],
-            state.get("context"),
-            state["cost_tracking"]
-        )
-        state["step_results"] = results
-        
-        state["progress"] = 0.6
-        
+        state["progress"] = 0.40
+
+        agent_results: dict = {}
+        previous_results: dict = dict(state.get("agent_results") or {})
+
+        for agent_name in state["agents_selected"]:
+            try:
+                agent = self._load_agent(agent_name)
+                result = await agent.run(
+                    task=state["task"],
+                    context=state.get("context"),
+                    previous_results=previous_results,
+                    validation_feedback=(
+                        state["validation_result"].issues
+                        if state.get("validation_result") and state["retry_count"] > 0
+                        else []
+                    ),
+                )
+                agent_results[agent_name] = {"status": "success", "result": result}
+                previous_results[agent_name] = result
+
+                if hasattr(result, "usage_metadata"):
+                    self._update_cost(state["cost_tracking"], result.usage_metadata)
+
+            except ImportError:
+                logger.warning("agent_not_found_using_stub", agent=agent_name)
+                agent_results[agent_name] = {
+                    "status": "stub",
+                    "result": f"[{agent_name} agent not yet implemented]",
+                }
+            except Exception as exc:
+                logger.error("agent_execution_failed", agent=agent_name, error=str(exc))
+                agent_results[agent_name] = {"status": "error", "error": str(exc)}
+                state["errors"].append(f"{agent_name}: {exc}")
+
+        state["agent_results"] = agent_results
+        state["progress"] = 0.65
         return state
-    
+
     async def _validate_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Validate execution results."""
+        """Single-pass validation of all agent results."""
         logger.info("node_validate", task_id=state["task_id"])
-        
-        state["phase"] = Phase.VALIDATION
+        state["phase"] = Phase.VALIDATING
         state["status"] = TaskStatus.VALIDATING
-        state["progress"] = 0.7
-        
-        # Run critics
-        validation = await self.critic.validate(
-            state["task"],
-            state["step_results"],
-            state["execution_plan"]
-        )
-        state["validation_results"].append(validation)
-        
+        state["progress"] = 0.75
+
+        try:
+            from src.agents.validator import Validator
+            validator = Validator(self.llm)
+            result = await validator.validate(
+                task=state["task"],
+                agent_results=state["agent_results"],
+            )
+            state["validation_result"] = result
+        except ImportError:
+            logger.warning("validator_not_found_auto_approving")
+            state["validation_result"] = ValidationResult(
+                approved=True,
+                severity="ok",
+                feedback="Auto-approved (validator not yet implemented)",
+            )
+
         return state
-    
-    async def _expert_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Get domain expert input."""
-        logger.info("node_expert", task_id=state["task_id"])
-        
-        insights = await self.domain_expert.provide_insights(
-            state["task"],
-            state.get("context")
-        )
-        state["expert_insights"].extend(insights)
-        
-        return state
-    
-    async def _summarize_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Summarize results."""
-        logger.info("node_summarize", task_id=state["task_id"])
-        
-        state["phase"] = Phase.SUMMARIZATION
-        state["status"] = TaskStatus.SUMMARIZING
-        state["progress"] = 0.85
-        
-        summary = await self.summarizer.summarize(
-            state["task"],
-            state["step_results"],
-            state["validation_results"]
-        )
-        state["summary"] = summary
-        
-        return state
-    
+
     async def _respond_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Generate final response."""
+        """Format agent results into a final markdown response."""
         logger.info("node_respond", task_id=state["task_id"])
-        
-        state["phase"] = Phase.RESPONSE
-        state["progress"] = 0.95
-        
-        response = await self.responder.format_response(
-            state["task"],
-            state["summary"],
-            state["step_results"]
-        )
-        state["final_response"] = response
-        
+        state["phase"] = Phase.RESPONDING
+        state["progress"] = 0.90
+
+        try:
+            from src.agents.responders.responder import Responder
+            responder = Responder(self.llm)
+            response = await responder.format_response(
+                task=state["task"],
+                summary=None,
+                results=state["agent_results"],
+            )
+            state["final_response"] = response
+        except ImportError:
+            lines = ["## Results\n"]
+            for agent, data in state["agent_results"].items():
+                result = data.get("result", data.get("error", "no output"))
+                lines.append(f"**{agent.title()}**\n\n{result}\n")
+            state["final_response"] = "\n".join(lines)
+
         state["status"] = TaskStatus.COMPLETED
         state["phase"] = Phase.COMPLETED
         state["progress"] = 1.0
-        
         return state
-    
-    async def _retry_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Handle retry logic."""
-        logger.info("node_retry", task_id=state["task_id"], retry_count=state["retry_count"])
-        
-        state["status"] = TaskStatus.RETRYING
-        state["retry_count"] += 1
-        
-        # Reset to execution phase
-        state["phase"] = Phase.EXECUTION
-        
-        return state
-    
-    async def _failure_node(self, state: OrchestratorState) -> OrchestratorState:
-        """Handle failure."""
-        logger.error("node_failure", task_id=state["task_id"])
-        
+
+    async def _fail_node(self, state: OrchestratorState) -> OrchestratorState:
+        logger.error("node_fail", task_id=state["task_id"], errors=state["errors"])
         state["status"] = TaskStatus.FAILED
         state["phase"] = Phase.FAILED
         state["progress"] = 1.0
-        
+        if not state["final_response"]:
+            state["final_response"] = (
+                "Task could not be completed. "
+                f"Errors: {'; '.join(state['errors']) or 'unknown'}"
+            )
         return state
-    
-    # Conditional edge functions
-    def _should_get_expert_input(self, state: OrchestratorState) -> str:
-        """Decide if we need domain expert input."""
-        # Simple heuristic: complex tasks with multiple steps
-        if state["execution_plan"] and len(state["execution_plan"].steps) > 5:
-            return "expert"
-        return "execute"
-    
-    def _check_validation_result(self, state: OrchestratorState) -> str:
-        """Check validation results and decide next step."""
-        if not state["validation_results"]:
-            return "failed"
-        
-        latest_validation = state["validation_results"][-1]
-        
-        # Check if approved
-        if latest_validation.approved:
+
+    # ------------------------------------------------------------------
+    # Conditional routing
+    # ------------------------------------------------------------------
+
+    def _route_after_validation(self, state: OrchestratorState) -> str:
+        result = state.get("validation_result")
+
+        if result and result.approved:
             return "approved"
-        
-        # Check retry limit
+
         if state["retry_count"] >= settings.max_retry_attempts:
-            logger.warning(
-                "max_retries_exceeded",
-                task_id=state["task_id"],
-                retry_count=state["retry_count"]
-            )
+            logger.warning("max_retries_reached", task_id=state["task_id"])
             return "failed"
-        
-        # Check budget
-        if not state["cost_tracking"].check_budget():
-            logger.warning(
-                "budget_exceeded",
-                task_id=state["task_id"],
-                cost=state["cost_tracking"].total_cost_usd
-            )
+
+        if not state["cost_tracking"].within_budget():
+            logger.warning("budget_exceeded", task_id=state["task_id"])
             return "failed"
-        
+
+        state["retry_count"] += 1
+        state["status"] = TaskStatus.RETRYING
+        logger.info("retrying", task_id=state["task_id"], attempt=state["retry_count"])
         return "retry"
-    
-    async def run(self, state: OrchestratorState) -> OrchestratorState:
-        """Run the orchestration graph.
-        
-        Args:
-            state: Initial state
-            
-        Returns:
-            Final state after processing
-        """
-        logger.info("graph_started", task_id=state["task_id"])
-        
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _load_agent(self, name: str):
+        """Dynamically load a specialist agent by name."""
+        if name == "data":
+            from src.agents.data import DataAgent
+            return DataAgent(self.llm)
+        if name == "portfolio":
+            from src.agents.portfolio import PortfolioAgent
+            return PortfolioAgent(self.llm)
+        if name == "risk":
+            from src.agents.risk import RiskAgent
+            return RiskAgent(self.llm)
+        if name == "report":
+            from src.agents.reports import ReportAgent
+            return ReportAgent(self.llm)
+        raise ImportError(f"No agent registered for name: '{name}'")
+
+    def _update_cost(self, tracking, usage_metadata) -> None:
         try:
-            # Run the graph
+            tracking.llm_calls += 1
+            tracking.tokens_used += (
+                getattr(usage_metadata, "input_tokens", 0)
+                + getattr(usage_metadata, "output_tokens", 0)
+            )
+            tracking.total_cost_usd += tracking.tokens_used * 0.000003
+        except Exception:
+            pass
+
+    async def run(self, state: OrchestratorState) -> OrchestratorState:
+        """Run the full orchestration graph."""
+        logger.info("graph_started", task_id=state["task_id"])
+        try:
             final_state = await self.graph.ainvoke(state)
-            
-            logger.info(
-                "graph_completed",
-                task_id=state["task_id"],
-                status=final_state["status"],
-                cost=final_state["cost_tracking"].total_cost_usd
-            )
-            
+            logger.info("graph_completed", task_id=state["task_id"], status=final_state["status"])
             return final_state
-        
-        except Exception as e:
-            logger.error(
-                "graph_failed",
-                task_id=state["task_id"],
-                error=str(e),
-                exc_info=True
-            )
-            
+        except Exception as exc:
+            logger.error("graph_failed", task_id=state["task_id"], error=str(exc), exc_info=True)
             state["status"] = TaskStatus.FAILED
             state["phase"] = Phase.FAILED
-            state["errors"].append(str(e))
-            
+            state["errors"].append(str(exc))
             return state
