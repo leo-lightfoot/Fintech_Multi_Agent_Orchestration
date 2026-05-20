@@ -16,7 +16,10 @@ from src.orchestrator.state import (
     TaskStatus,
     ValidationResult,
 )
+from langchain_core.runnables import RunnableConfig
+
 from src.audit.trail import AuditTrail, AuditEntry
+from src.utils.cost import CostCallback
 from src.utils.llm import get_llm
 from src.utils.config import settings
 from src.utils.logging import get_logger
@@ -136,9 +139,6 @@ class OrchestrationGraph:
                 )
                 agent_results[agent_name] = {"status": "success", "result": result}
                 previous_results[agent_name] = result
-
-                if hasattr(result, "usage_metadata"):
-                    self._update_cost(state["cost_tracking"], result.usage_metadata)
 
                 await self.audit.log(AuditEntry(
                     task_id=state["task_id"],
@@ -296,23 +296,21 @@ class OrchestrationGraph:
             return ReportAgent(self.llm)
         raise ImportError(f"No agent registered for name: '{name}'")
 
-    def _update_cost(self, tracking, usage_metadata) -> None:
-        try:
-            tracking.llm_calls += 1
-            tracking.tokens_used += (
-                getattr(usage_metadata, "input_tokens", 0)
-                + getattr(usage_metadata, "output_tokens", 0)
-            )
-            tracking.total_cost_usd += tracking.tokens_used * 0.000003
-        except Exception:
-            pass
-
     async def run(self, state: OrchestratorState) -> OrchestratorState:
-        """Run the full orchestration graph."""
+        """Run the full orchestration graph with real-time cost tracking."""
         logger.info("graph_started", task_id=state["task_id"])
+        config = RunnableConfig(
+            callbacks=[CostCallback(state["cost_tracking"])]
+        )
         try:
-            final_state = await self.graph.ainvoke(state)
-            logger.info("graph_completed", task_id=state["task_id"], status=final_state["status"])
+            final_state = await self.graph.ainvoke(state, config)
+            logger.info(
+                "graph_completed",
+                task_id=state["task_id"],
+                status=final_state["status"],
+                cost_usd=round(final_state["cost_tracking"].total_cost_usd, 4),
+                llm_calls=final_state["cost_tracking"].llm_calls,
+            )
             return final_state
         except Exception as exc:
             logger.error("graph_failed", task_id=state["task_id"], error=str(exc), exc_info=True)

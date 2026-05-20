@@ -220,5 +220,234 @@ class TestRedisStoreSerialisation:
         assert restored["agents_selected"] == ["data", "risk"]
 
 
+# ---------------------------------------------------------------------------
+# Supervisor routing -- pure logic tests (no LLM needed)
+# ---------------------------------------------------------------------------
+
+class TestSupervisorRouting:
+    """Tests for the supervisor sanitize / routing logic -- no LLM calls."""
+
+    def _make_decision(self, intent: str, agents: list[str]):
+        from src.agents.supervisor import SupervisorDecision
+        return SupervisorDecision(intent=intent, agents=agents, reasoning="test")
+
+    def _sanitize(self, decision):
+        from src.agents.supervisor import Supervisor
+        from unittest.mock import MagicMock
+        sup = object.__new__(Supervisor)
+        sup.llm = MagicMock()
+        return sup._sanitize(decision)
+
+    def test_unknown_intent_falls_back_to_data(self):
+        d = self._make_decision("completely_unknown_intent", ["data"])
+        result = self._sanitize(d)
+        assert result.intent == "unknown"
+        assert result.agents == ["data"]
+
+    def test_valid_intent_kept_unchanged(self):
+        d = self._make_decision("risk_report", ["data", "risk", "report"])
+        result = self._sanitize(d)
+        assert result.intent == "risk_report"
+        assert result.agents == ["data", "risk", "report"]
+
+    def test_invalid_agent_name_replaced_with_canonical(self):
+        d = self._make_decision("data_query", ["data", "nonexistent_agent"])
+        result = self._sanitize(d)
+        # canonical pipeline for data_query is ["data"]
+        assert all(a in {"data", "portfolio", "risk", "report"} for a in result.agents)
+
+    def test_data_always_first(self):
+        d = self._make_decision("portfolio_query", ["portfolio", "data"])
+        result = self._sanitize(d)
+        assert result.agents[0] == "data"
+
+    def test_full_analysis_pipeline(self):
+        d = self._make_decision("full_analysis", ["data", "portfolio", "risk", "report"])
+        result = self._sanitize(d)
+        assert result.intent == "full_analysis"
+        assert result.agents == ["data", "portfolio", "risk", "report"]
+
+
+# ---------------------------------------------------------------------------
+# RiskAgent -- pure logic tests
+# ---------------------------------------------------------------------------
+
+class TestRiskAgentHelpers:
+    """Tests for RiskAgent helper functions."""
+
+    def test_extract_data_from_previous_results(self):
+        from src.agents.risk import _extract_data
+        previous = {"data": {"status": "success", "result": "Fund F001: breached=1 on R002"}}
+        text = _extract_data(previous)
+        assert "F001" in text
+        assert "breached" in text
+
+    def test_extract_data_missing_returns_placeholder(self):
+        from src.agents.risk import _extract_data
+        assert _extract_data(None) == "No data available."
+        assert _extract_data({}) == "No data available."
+
+    def test_risk_result_model_validates(self):
+        from src.agents.risk import RiskResult, RiskFlag, LimitBreach
+        result = RiskResult(
+            overall_status="breach",
+            breaches=[LimitBreach(
+                rule_id="R002", fund_id="F001", rule_name="Cash Min",
+                limit_value=2.0, current_value=1.5, overshoot_pct=-25.0
+            )],
+            flags=[RiskFlag(
+                rule_id="R002", fund_id="F001", rule_name="Cash Min",
+                rule_type="MIN_CASH_PCT", limit_value=2.0, current_value=1.5,
+                breached=True, severity="warning"
+            )],
+            summary="One breach found.",
+        )
+        assert result.overall_status == "breach"
+        assert len(result.breaches) == 1
+        assert result.breaches[0].rule_id == "R002"
+
+
+# ---------------------------------------------------------------------------
+# Validator -- pure logic tests
+# ---------------------------------------------------------------------------
+
+class TestValidatorHelpers:
+    """Tests for Validator helper functions."""
+
+    def test_summarise_success_result(self):
+        from src.agents.validator import _summarise_results
+        results = {"data": {"status": "success", "result": "Found 3 funds"}}
+        summary = _summarise_results(results)
+        assert "[data]" in summary
+        assert "Found 3 funds" in summary
+
+    def test_summarise_stub_result(self):
+        from src.agents.validator import _summarise_results
+        results = {"risk": {"status": "stub", "result": "[risk not yet implemented]"}}
+        summary = _summarise_results(results)
+        assert "not yet implemented" in summary
+
+    def test_summarise_error_result(self):
+        from src.agents.validator import _summarise_results
+        results = {"portfolio": {"status": "error", "error": "connection refused"}}
+        summary = _summarise_results(results)
+        assert "ERROR" in summary
+        assert "connection refused" in summary
+
+    def test_summarise_pydantic_model_result(self):
+        from src.agents.validator import _summarise_results
+        from src.agents.risk import RiskResult
+        risk_result = RiskResult(overall_status="ok", summary="All clear.")
+        results = {"risk": {"status": "success", "result": risk_result}}
+        summary = _summarise_results(results)
+        # Pydantic model should be serialised to JSON, not raw repr
+        assert "overall_status" in summary
+        assert "RiskResult" not in summary
+
+
+# ---------------------------------------------------------------------------
+# Audit trail -- unit tests without live Redis
+# ---------------------------------------------------------------------------
+
+class TestAuditTrail:
+    """Tests for AuditEntry model and AuditTrail logging."""
+
+    def test_audit_entry_defaults(self):
+        from src.audit.trail import AuditEntry
+        entry = AuditEntry(
+            task_id="t1", session_id="s1", user_id="alice",
+            action="agent_executed", agent="data",
+        )
+        assert entry.status == "success"
+        assert entry.role == "ops"
+        assert entry.cost_usd == 0.0
+        assert entry.timestamp  # auto-set
+
+    def test_audit_trail_fire_and_forget_on_none_store(self):
+        """AuditTrail with no store must not raise."""
+        import asyncio
+        from src.audit.trail import AuditTrail, AuditEntry
+        trail = AuditTrail(redis_store=None)
+        entry = AuditEntry(task_id="t", session_id="s", user_id="u",
+                           action="test", agent="data")
+        # Should complete silently
+        asyncio.get_event_loop().run_until_complete(trail.log(entry))
+
+
+# ---------------------------------------------------------------------------
+# Excel tool -- reads the committed sample file
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestExcelTool:
+    """Tests for the Excel tool using the committed sample file."""
+
+    async def test_read_sample_xlsx(self):
+        """Reading the sample portfolio file should return all three sheets."""
+        from src.tools.excel import _read_file
+        import json
+
+        result = _read_file("sample_portfolio.xlsx")
+        data = json.loads(result)
+
+        assert "sheets" in data
+        sheet_names = [s["name"] for s in data["sheets"]]
+        assert "Positions" in sheet_names
+        assert "NAV History" in sheet_names
+        assert "Limits" in sheet_names
+
+    async def test_read_specific_sheet(self):
+        """Reading a single sheet returns only that sheet."""
+        from src.tools.excel import _read_file
+        import json
+
+        result = _read_file("sample_portfolio.xlsx", sheet="Limits")
+        data = json.loads(result)
+        assert len(data["sheets"]) == 1
+        assert data["sheets"][0]["name"] == "Limits"
+
+    async def test_nonexistent_file_returns_error(self):
+        from src.tools.excel import _read_file
+        import json
+
+        result = _read_file("does_not_exist.xlsx")
+        data = json.loads(result)
+        assert "error" in data
+
+    async def test_path_traversal_blocked(self):
+        from src.tools.excel import _read_file
+        import json
+
+        result = _read_file("../../etc/passwd")
+        data = json.loads(result)
+        assert "error" in data
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking
+# ---------------------------------------------------------------------------
+
+class TestCostTracking:
+    """Tests for the pricing table and cost calculation."""
+
+    def test_known_model_price(self):
+        from src.utils.cost import calculate_cost
+        # claude-sonnet-4-6: $3/M input, $15/M output
+        cost = calculate_cost("claude-sonnet-4-6", input_tokens=1000, output_tokens=200)
+        expected = (1000 * 3.00 + 200 * 15.00) / 1_000_000
+        assert abs(cost - expected) < 1e-9
+
+    def test_unknown_model_uses_default(self):
+        from src.utils.cost import calculate_cost, PRICING
+        cost = calculate_cost("some-unknown-model", input_tokens=1000, output_tokens=500)
+        default_pricing = PRICING["_default"]
+        expected = (1000 * default_pricing["input"] + 500 * default_pricing["output"]) / 1_000_000
+        assert abs(cost - expected) < 1e-9
+
+    def test_zero_tokens_zero_cost(self):
+        from src.utils.cost import calculate_cost
+        assert calculate_cost("claude-sonnet-4-6", 0, 0) == 0.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

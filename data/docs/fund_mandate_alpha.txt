@@ -1,0 +1,28 @@
+FUND MANDATE -- ALPHA GROWTH FUND (F001)
+
+Investment Objective
+The Alpha Growth Fund seeks long-term capital appreciation by investing primarily
+in large-cap equity securities listed on major US exchanges.
+
+Investment Policy
+- Minimum 80% allocation to US listed equities at all times
+- Maximum 15% in any single stock (single-stock concentration limit)
+- Minimum 2% cash reserve at all times
+- No leverage or short positions permitted
+- Derivatives may only be used for hedging purposes
+
+Benchmark
+S&P 500 Total Return Index
+
+Risk Limits
+- Tracking error target: 3-7% annualised vs benchmark
+- Maximum drawdown alert: -15% from peak (requires board notification)
+- Single stock limit: 15% of NAV
+- Cash minimum: 2% of NAV
+
+Reporting
+Monthly NAV reports due by the 5th business day of the following month.
+Quarterly risk reports due within 15 business days of quarter end.
+Annual audited accounts due within 90 days of financial year end.
+
+Effective Date: 1 January 2024

@@ -1,0 +1,27 @@
+RISK MANAGEMENT POLICY
+
+Scope
+This policy applies to all funds managed by the firm including
+Alpha Growth (F001), Beta Income (F002), and Gamma Balanced (F003).
+
+Limit Breach Procedure
+1. Any limit breach must be reported to the Risk Committee within 24 hours.
+2. The portfolio manager must provide a remediation plan within 48 hours.
+3. Breaches unresolved after 5 business days require board escalation.
+4. All breaches are logged in the compliance system with timestamp and resolution date.
+
+Limit Types
+- MAX_WEIGHT_PCT : Maximum weight of any single position as % of NAV
+- MIN_CASH_PCT   : Minimum cash holding as % of NAV
+- MAX_DURATION   : Maximum portfolio duration in years (fixed income funds)
+- MAX_EQUITY_PCT : Maximum equity exposure as % of NAV
+- MAX_COMMODITY_PCT : Maximum commodity exposure as % of NAV
+
+Escalation Matrix
+- Warning (current within 90-100% of limit): notify portfolio manager
+- Breach (current exceeds limit): notify Risk Committee + Compliance Officer
+- Critical breach (current > 120% of limit): immediate board notification
+
+Reporting Frequency
+Daily limit monitoring reports are generated automatically.
+Weekly risk summary distributed to senior management every Monday.

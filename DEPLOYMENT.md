@@ -1,228 +1,91 @@
-# Multi-Agent Orchestrator Deployment Guide
+# Deployment Guide
 
-## Production Deployment
-
-### Docker Deployment
-
-1. **Build the Docker image:**
+## Docker Compose (recommended for local + staging)
 
 ```bash
-cd multi-agent-orchestrator
-docker build -t multi-agent-orchestrator:latest .
-```
+# Set required env vars
+export LLM_API_KEY=your-key-here
+export API_SECRET_KEY=change-this-in-production
 
-2. **Run with Docker Compose:**
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-
-services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-  
-  orchestrator:
-    image: multi-agent-orchestrator:latest
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - API_SECRET_KEY=${API_SECRET_KEY}
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-volumes:
-  redis-data:
-```
-
-```bash
+# Start all services (Redis + orchestrator)
 docker-compose up -d
+
+# View logs
+docker-compose logs -f orchestrator
+
+# Stop
+docker-compose down
 ```
 
-### Kubernetes Deployment
+The `docker-compose.yml` at the repo root defines both services.
+Persistent Redis data is stored in the `redis-data` Docker volume.
 
-1. **Create Kubernetes manifests:**
+## Environment variables
 
-```yaml
-# k8s/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: multi-agent-orchestrator
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: orchestrator
-  template:
-    metadata:
-      labels:
-        app: orchestrator
-    spec:
-      containers:
-      - name: orchestrator
-        image: multi-agent-orchestrator:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: REDIS_URL
-          value: "redis://redis-service:6379/0"
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: orchestrator-secrets
-              key: openai-api-key
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2000m"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: orchestrator-service
-spec:
-  selector:
-    app: orchestrator
-  ports:
-  - port: 80
-    targetPort: 8000
-  type: LoadBalancer
+Copy `.env.example` to `.env` and fill in:
+
+```
+LLM_PROVIDER=anthropic
+LLM_API_KEY=sk-ant-...
+LLM_MODEL=claude-sonnet-4-6
+API_SECRET_KEY=<strong-random-string>
+REDIS_URL=redis://redis:6379/0
 ```
 
-2. **Deploy to Kubernetes:**
+All other settings have safe defaults. See `.env.example` for the full list.
+
+## Manual / VM deployment
 
 ```bash
-kubectl apply -f k8s/
+# Install system deps
+sudo apt-get install redis-server python3.11 python3.11-venv
+
+# App setup
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Ingest documents once
+python scripts/ingest_docs.py
+
+# Run with gunicorn + uvicorn workers
+pip install gunicorn
+gunicorn src.gateway.api:app \
+  --workers 2 \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 \
+  --timeout 120
 ```
 
-### Environment Variables
+## Data persistence
 
-Required:
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `API_SECRET_KEY`: Secret key for JWT tokens
-- `REDIS_URL`: Redis connection string
+| What | Where | Notes |
+|---|---|---|
+| Task state | Redis (`task:{id}`) | 24-hour TTL |
+| Session history | Redis (`session:{id}:history`) | 7-day TTL |
+| Audit log | Redis (`audit:{session_id}`) | 90-day TTL |
+| Vector store | `data/chroma/` | Local ChromaDB, persist this directory |
+| Sample data | `data/` | Excel + text docs committed to repo |
 
-Optional:
-- `MAX_ITERATIONS`: Maximum retry attempts (default: 3)
-- `BUDGET_LIMIT_USD`: Maximum cost per task (default: 10.0)
-- `CODE_EXECUTION_TIMEOUT`: Timeout for code execution (default: 60s)
+## Scaling notes
 
-### Scaling Considerations
+- The API is stateless -- run multiple replicas behind a load balancer
+- All shared state lives in Redis -- point every replica at the same instance
+- ChromaDB in this setup is local (single-node) -- for multi-replica deployments, use a hosted vector DB or shared volume
+- LLM calls are the bottleneck -- budget accordingly
 
-1. **Horizontal Scaling:**
-   - The API server can be scaled horizontally
-   - Use a load balancer to distribute traffic
-   - Redis handles state synchronization
-
-2. **Redis Scaling:**
-   - Use Redis Cluster for high availability
-   - Consider Redis Sentinel for automatic failover
-   - Enable Redis persistence (AOF + RDB)
-
-3. **Rate Limiting:**
-   - Implement rate limiting at the API gateway
-   - Use Redis for distributed rate limiting
-
-### Monitoring
-
-1. **Prometheus Metrics:**
-   - Set `PROMETHEUS_ENABLED=true`
-   - Metrics available at `:9090/metrics`
-
-2. **Logging:**
-   - Structured JSON logs for easy parsing
-   - Ship logs to ELK, Datadog, or CloudWatch
-
-3. **Health Checks:**
-   - Liveness: `GET /health`
-   - Readiness: Check Redis connectivity
-
-### Security
-
-1. **API Security:**
-   - Use HTTPS in production
-   - Implement rate limiting
-   - Enable CORS restrictions
-   - Use strong JWT secrets
-
-2. **Code Execution:**
-   - Run code in isolated containers
-   - Use E2B or Modal for production sandboxing
-   - Never execute untrusted code directly
-
-3. **Secrets Management:**
-   - Use Kubernetes Secrets or AWS Secrets Manager
-   - Never commit secrets to version control
-   - Rotate API keys regularly
-
-### Performance Tuning
-
-1. **Redis:**
-   - Tune maxmemory and eviction policies
-   - Use connection pooling
-   - Enable persistence for production
-
-2. **API:**
-   - Configure uvicorn workers based on CPU cores
-   - Use gunicorn for production
-   - Enable HTTP/2 if supported
-
-3. **LLM Calls:**
-   - Implement caching for repeated queries
-   - Use streaming for long responses
-   - Monitor token usage and costs
-
-## Cloud-Specific Deployments
-
-### AWS ECS
+## Health check
 
 ```bash
-# Create task definition
-aws ecs register-task-definition --cli-input-json file://ecs-task-def.json
-
-# Create service
-aws ecs create-service --cluster my-cluster --service-name orchestrator --task-definition orchestrator:1 --desired-count 3
+curl http://localhost:8000/health
+# {"status":"healthy","version":"1.0.0","redis_connected":true,...}
 ```
 
-### Google Cloud Run
+## Graceful shutdown
 
-```bash
-# Build and push
-gcloud builds submit --tag gcr.io/PROJECT_ID/orchestrator
+The API handles SIGTERM gracefully:
+1. Stops accepting new requests
+2. Waits up to 30 seconds for in-flight tasks to complete
+3. Cancels any remaining tasks and closes Redis connection
 
-# Deploy
-gcloud run deploy orchestrator --image gcr.io/PROJECT_ID/orchestrator --platform managed
-```
-
-### Azure Container Instances
-
-```bash
-az container create --resource-group myResourceGroup --name orchestrator --image orchestrator:latest --cpu 2 --memory 4
-```
-
-## Backup and Recovery
-
-1. **Redis Backups:**
-   - Enable AOF persistence
-   - Regular RDB snapshots
-   - Backup to S3 or cloud storage
-
-2. **State Recovery:**
-   - Use the RecoveryManager to resume interrupted tasks
-   - Checkpoints saved automatically at each phase
-
-3. **Disaster Recovery:**
-   - Multi-region Redis replication
-   - Regular database backups
-   - Documented recovery procedures
+Send SIGTERM (or `docker-compose stop`) -- do not use SIGKILL unless the process is hung.

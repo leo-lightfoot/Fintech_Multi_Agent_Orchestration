@@ -1,5 +1,7 @@
 """FastAPI gateway for user requests."""
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+import asyncio
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
@@ -9,7 +11,7 @@ from datetime import datetime
 from src.utils.config import settings
 from src.utils.logging import configure_logging, get_logger
 from src.gateway.sanitizer import InputSanitizer
-from src.gateway.auth import AuthManager, TokenData
+from src.gateway.auth import AuthManager, TokenData, get_current_user
 from src.gateway.middleware import limiter, rate_limit_exceeded_handler, RateLimitExceededError
 from src.orchestrator.coordinator import TaskCoordinator
 from src.memory.redis_store import RedisStore
@@ -18,12 +20,49 @@ from src.memory.redis_store import RedisStore
 configure_logging()
 logger = get_logger(__name__)
 
+# Module-level singletons initialised in lifespan
+redis_store: RedisStore
+coordinator: TaskCoordinator
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup and graceful shutdown."""
+    global redis_store, coordinator
+
+    # -- Startup --
+    logger.info("api_starting")
+    redis_store = RedisStore()
+    coordinator = TaskCoordinator(redis_store)
+    logger.info("api_ready", host=settings.api_host, port=settings.api_port)
+
+    yield
+
+    # -- Shutdown --
+    logger.info("api_shutting_down")
+    active = list(coordinator.active_tasks.values())
+    if active:
+        logger.info("shutdown_waiting_for_tasks", count=len(active))
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*active, return_exceptions=True),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("shutdown_timeout_cancelling_remaining_tasks")
+            for t in coordinator.active_tasks.values():
+                t.cancel()
+    await redis_store.close()
+    logger.info("api_stopped")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Fintech Multi-Agent Orchestrator",
     description="Supervisor-pattern multi-agent system for fintech solutions teams",
     version="1.0.0",
     debug=settings.debug,
+    lifespan=lifespan,
 )
 
 # Rate limiting
@@ -38,10 +77,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize components
-redis_store = RedisStore()
-coordinator = TaskCoordinator(redis_store)
 
 
 # Request/Response Models
@@ -81,30 +116,6 @@ class HealthResponse(BaseModel):
     version: str
     redis_connected: bool
     timestamp: datetime
-
-
-# Dependency for authentication
-async def get_current_user(
-    authorization: Optional[str] = Header(None)
-) -> Optional[TokenData]:
-    """Verify authentication token.
-    
-    For demo purposes, this is optional. In production, make it required.
-    """
-    if not authorization:
-        return None
-    
-    try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            return None
-        
-        token_data = AuthManager.verify_token(token)
-        return token_data
-    
-    except Exception as e:
-        logger.warning("auth_failed", error=str(e))
-        return None
 
 
 # API Routes
@@ -176,22 +187,29 @@ async def submit_task(
         session_id = body.session_id or str(uuid.uuid4())
         user_id = (current_user.user_id if current_user
                    else body.user_id or "anonymous")
-        
+        role = current_user.role if current_user else "ops_read"
+
         logger.info(
             "task_submitted",
             task_id=task_id,
             session_id=session_id,
             user_id=user_id,
-            task_length=len(sanitized_task)
+            role=role,
+            task_length=len(sanitized_task),
         )
-        
+
+        # Inject role into context so agents can enforce table-level restrictions
+        if sanitized_context is None:
+            sanitized_context = {}
+        sanitized_context["_role"] = role
+
         # Submit to coordinator (async processing)
         await coordinator.submit_task(
             task_id=task_id,
             session_id=session_id,
             user_id=user_id,
             task=sanitized_task,
-            context=sanitized_context
+            context=sanitized_context,
         )
         
         return TaskResponse(
@@ -289,19 +307,22 @@ async def get_audit_log(
 
 @app.post("/api/auth/token")
 @limiter.limit("10/minute")
-async def create_token(request: Request, user_id: str, session_id: Optional[str] = None):
-    """Create an authentication token (demo endpoint).
-    
-    In production, this would require actual authentication.
+async def create_token(
+    request: Request,
+    user_id: str,
+    role: str = "ops_read",
+    session_id: Optional[str] = None,
+):
+    """Create an authentication token (dev endpoint -- no password required).
+
+    Valid roles: ops_read, ops_write, risk_read, admin
     """
+    from src.gateway.auth import ROLES
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail=f"Unknown role '{role}'. Valid: {ROLES}")
     session_id = session_id or str(uuid.uuid4())
-    token = AuthManager.create_session_token(user_id, session_id)
-    
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "session_id": session_id
-    }
+    token = AuthManager.create_session_token(user_id, session_id, role=role)
+    return {"access_token": token, "token_type": "bearer", "session_id": session_id, "role": role}
 
 
 if __name__ == "__main__":
