@@ -14,6 +14,7 @@ real token counts into the CostTracking object in state.
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
+from src.orchestrator.state import CostTracking
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
@@ -48,7 +49,7 @@ class CostCallback(BaseCallbackHandler):
         await graph.ainvoke(state, config)
     """
 
-    def __init__(self, tracking, model: str | None = None):
+    def __init__(self, tracking: CostTracking, model: str | None = None):
         super().__init__()
         self.tracking = tracking
         self.model = model or settings.llm_model

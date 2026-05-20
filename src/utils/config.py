@@ -61,5 +61,17 @@ class Settings(BaseSettings):
     prometheus_port: int = 9090
 
 
+def _validate() -> "Settings":
+    s = Settings()
+    if s.llm_api_key == "your-api-key-here":
+        import warnings
+        warnings.warn(
+            "LLM_API_KEY is still the placeholder value. "
+            "Set a real key in .env before making LLM calls.",
+            stacklevel=2,
+        )
+    return s
+
+
 # Global settings instance
-settings = Settings()
+settings = _validate()

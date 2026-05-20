@@ -1,6 +1,5 @@
 """Unit tests for the fintech multi-agent orchestrator."""
 import pytest
-import asyncio
 
 from src.orchestrator.state import create_initial_state, Phase, TaskStatus
 from src.gateway.sanitizer import InputSanitizer
@@ -276,16 +275,16 @@ class TestRiskAgentHelpers:
     """Tests for RiskAgent helper functions."""
 
     def test_extract_data_from_previous_results(self):
-        from src.agents.risk import _extract_data
+        from src.agents.utils import extract_data_text
         previous = {"data": {"status": "success", "result": "Fund F001: breached=1 on R002"}}
-        text = _extract_data(previous)
+        text = extract_data_text(previous)
         assert "F001" in text
         assert "breached" in text
 
     def test_extract_data_missing_returns_placeholder(self):
-        from src.agents.risk import _extract_data
-        assert _extract_data(None) == "No data available."
-        assert _extract_data({}) == "No data available."
+        from src.agents.utils import extract_data_text
+        assert extract_data_text(None) == "No data available."
+        assert extract_data_text({}) == "No data available."
 
     def test_risk_result_model_validates(self):
         from src.agents.risk import RiskResult, RiskFlag, LimitBreach
@@ -359,19 +358,18 @@ class TestAuditTrail:
             action="agent_executed", agent="data",
         )
         assert entry.status == "success"
-        assert entry.role == "ops"
+        assert entry.role == "ops"    # default; graph passes real role at runtime
         assert entry.cost_usd == 0.0
         assert entry.timestamp  # auto-set
 
-    def test_audit_trail_fire_and_forget_on_none_store(self):
+    @pytest.mark.asyncio
+    async def test_audit_trail_fire_and_forget_on_none_store(self):
         """AuditTrail with no store must not raise."""
-        import asyncio
         from src.audit.trail import AuditTrail, AuditEntry
         trail = AuditTrail(redis_store=None)
         entry = AuditEntry(task_id="t", session_id="s", user_id="u",
                            action="test", agent="data")
-        # Should complete silently
-        asyncio.get_event_loop().run_until_complete(trail.log(entry))
+        await trail.log(entry)  # should complete silently
 
 
 # ---------------------------------------------------------------------------

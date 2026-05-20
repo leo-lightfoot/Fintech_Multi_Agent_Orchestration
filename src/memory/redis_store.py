@@ -1,5 +1,5 @@
 """Redis-backed state store for task state and session history."""
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 import json
 import redis.asyncio as redis
 from datetime import datetime, timedelta
@@ -81,7 +81,7 @@ class RedisStore:
     # ------------------------------------------------------------------
 
     async def add_to_session_history(
-        self, session_id: str, task_id: str, task_data: Dict[str, Any]
+        self, session_id: str, task_id: str, task_data: dict[str, Any]
     ) -> bool:
         try:
             key = f"session:{session_id}:history"
@@ -95,7 +95,7 @@ class RedisStore:
             logger.error("session_history_update_failed", session_id=session_id, error=str(exc))
             return False
 
-    async def get_session_history(self, session_id: str, limit: int = 100) -> Dict[str, Any]:
+    async def get_session_history(self, session_id: str, limit: int = 100) -> dict[str, Any]:
         try:
             task_ids = await self.redis.smembers(f"session:{session_id}:tasks")
             entries = await self.redis.zrevrange(
@@ -113,8 +113,8 @@ class RedisStore:
 
             return {
                 "session_id": session_id,
-                "task_count": len(task_ids),
-                "history": history_items,
+                "task_count": len(task_ids),      # total tasks ever submitted
+                "history": history_items,          # up to `limit` most recent
             }
         except Exception as exc:
             logger.error("session_history_retrieval_failed", session_id=session_id, error=str(exc))
@@ -127,11 +127,10 @@ class RedisStore:
     async def save_audit_entry(self, session_id: str, entry: dict) -> None:
         """Append one audit entry to the session log (sorted set, score = timestamp)."""
         try:
-            import json as _json
-            from datetime import timezone as _tz
+            from datetime import timezone
             key = f"audit:{session_id}"
-            score = datetime.now(_tz.utc).timestamp()
-            await self.redis.zadd(key, {_json.dumps(entry, default=str): score})
+            score = datetime.now(timezone.utc).timestamp()
+            await self.redis.zadd(key, {json.dumps(entry, default=str): score})
             # Audit log kept for 90 days
             await self.redis.expire(key, timedelta(days=90))
         except Exception as exc:
@@ -140,9 +139,8 @@ class RedisStore:
     async def get_audit_log(self, session_id: str, limit: int = 200) -> list[dict]:
         """Return up to `limit` audit entries for a session, newest first."""
         try:
-            import json as _json
             raw = await self.redis.zrevrange(f"audit:{session_id}", 0, limit - 1)
-            return [_json.loads(r) for r in raw]
+            return [json.loads(r) for r in raw]
         except Exception as exc:
             logger.error("audit_read_failed", session_id=session_id, error=str(exc))
             return []
@@ -157,7 +155,7 @@ class RedisStore:
     # ------------------------------------------------------------------
 
     def _serialize_state(self, state: OrchestratorState) -> str:
-        serializable: Dict[str, Any] = {}
+        serializable: dict[str, Any] = {}
         for key, value in state.items():
             if hasattr(value, "model_dump"):
                 serializable[key] = value.model_dump()

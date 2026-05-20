@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from src.agents.utils import extract_data_text
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -70,7 +71,7 @@ class RiskAgent:
     ) -> RiskResult:
         logger.info("risk_agent_start", task_preview=task[:80])
 
-        data_text = _extract_data(previous_results)
+        data_text = extract_data_text(previous_results)
 
         user_content = f"Task: {task}\n\nDatabase data:\n{data_text}"
         if validation_feedback:
@@ -94,10 +95,3 @@ class RiskAgent:
         return result
 
 
-def _extract_data(previous_results: Optional[dict]) -> str:
-    if not previous_results:
-        return "No data available."
-    data_entry = previous_results.get("data", {})
-    if isinstance(data_entry, dict):
-        return str(data_entry.get("result", "No data available."))
-    return str(data_entry)

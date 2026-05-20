@@ -1,5 +1,5 @@
 """Responder agent -- formats agent results into a final markdown response."""
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -30,7 +30,7 @@ class Responder:
     async def format_response(
         self,
         task: str,
-        results: Dict[str, Any],
+        results: dict[str, Any],
         summary: Optional[str] = None,
     ) -> str:
         """Format agent results into a final markdown response.

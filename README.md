@@ -1,10 +1,10 @@
 # Fintech Multi-Agent Orchestrator
 
-A learning project -- a supervisor-pattern multi-agent system built for a fintech
-solutions / ops team. Agents collaborate to answer portfolio questions, run data
-queries, flag risk breaches, and generate reports.
+A supervisor-pattern multi-agent system built for a fintech solutions / ops team.
+Agents collaborate to answer portfolio questions, query data, flag risk breaches,
+and generate reports.
 
-Stack: LangGraph + FastAPI + Redis + Anthropic Claude + SQLite (placeholder DB)
+Stack: LangGraph + FastAPI + Redis + Anthropic Claude
 
 ---
 
@@ -14,139 +14,40 @@ Stack: LangGraph + FastAPI + Redis + Anthropic Claude + SQLite (placeholder DB)
 POST /api/task
     |
     v
-Supervisor Agent     -- classifies intent, picks specialist agents
+Supervisor          classifies intent, selects agents
     |
     v
-Specialist Agents    -- run in sequence, each receives previous output
-  data               -- SQL queries against the placeholder DB
-  portfolio          -- P&L, attribution, position analysis  (Phase 2)
-  risk               -- limit breaches, exposure flags        (Phase 2)
-  report             -- formats results into markdown         (Phase 2)
+Specialist agents   run in sequence
+  data              fetches from SQL, Excel, or document store
+  portfolio         P&L, attribution, position analysis
+  risk              limit breaches, exposure flags
+  report            formats results into markdown
     |
     v
-Validator            -- single-pass check, one retry allowed  (Phase 2)
+Validator           single-pass quality check, one retry allowed
     |
     v
-Responder            -- formats final markdown response
+Responder           final markdown response
     |
     v
-GET /api/task/{id}   -- poll for result
-```
-
----
-
-## Project structure
-
-```
-src/
-  agents/
-    supervisor.py      intent classification and routing
-    data.py            SQL tool-calling agent
-    responder.py       final response formatter
-    validator.py       (Phase 2)
-    portfolio.py       (Phase 2)
-    risk.py            (Phase 2)
-    reports.py         (Phase 2)
-  audit/
-    trail.py           (Phase 2)
-  gateway/
-    api.py             FastAPI routes
-    auth.py            JWT auth
-    sanitizer.py       input sanitization
-  memory/
-    redis_store.py     task state + session history
-  orchestrator/
-    graph.py           LangGraph 6-node supervisor graph
-    state.py           OrchestratorState TypedDict
-    coordinator.py     task submission and tracking
-  tools/
-    sql.py             sql_query tool + SQLite placeholder DB
-    registry.py        tool registry
-  utils/
-    config.py          settings (pydantic-settings)
-    llm.py             provider-agnostic LLM factory
-    logging.py         structlog setup
-tests/
-  test_orchestrator.py
+GET /api/task/{id}  poll for result
 ```
 
 ---
 
 ## Quick start
 
-Requirements: Python 3.11+, Redis
-
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# Copy and edit env file
-cp .env.example .env
-# Set LLM_API_KEY to your Anthropic key
-
-# Start Redis
+cp .env.example .env          # set LLM_API_KEY
+python scripts/ingest_docs.py # load sample documents
 redis-server
-
-# Run the API
 python -m uvicorn src.gateway.api:app --reload
 ```
 
----
-
-## API
-
-```bash
-# Submit a task
-curl -X POST http://localhost:8000/api/task \
-  -H "Content-Type: application/json" \
-  -d '{"task": "What are the current NAV values for all funds?"}'
-
-# Poll for result
-curl http://localhost:8000/api/task/{task_id}
-
-# Session history
-curl http://localhost:8000/api/session/{session_id}
-
-# Health check
-curl http://localhost:8000/health
-```
-
----
-
-## Configuration
-
-All settings are in `.env.example`. Key variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| LLM_PROVIDER | anthropic | anthropic, openai, or azure_openai |
-| LLM_API_KEY | (required) | your API key |
-| LLM_MODEL | claude-sonnet-4-6 | model name |
-| REDIS_URL | redis://localhost:6379/0 | Redis connection |
-| MAX_RETRY_ATTEMPTS | 1 | validation retry limit |
-| BUDGET_LIMIT_USD | 10.0 | max cost per task |
-
----
-
-## Placeholder database
-
-The SQL tool runs against an in-memory SQLite database seeded with fake data:
-
-- 3 funds (Alpha Growth, Beta Income, Gamma Balanced)
-- 9 positions across those funds
-- 5 trades
-- 7 NAV history records
-- 5 limit rules (2 currently breached)
-
-Swap `get_db()` in `src/tools/sql.py` for a real connection when ready.
-
----
-
-## Running tests
-
-```bash
-pytest tests/ -v
-```
+See [QUICKSTART.md](QUICKSTART.md) for Docker setup and troubleshooting.
+See [API_DOCS.md](API_DOCS.md) for the full endpoint reference.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment.
 
 ---
 

@@ -108,7 +108,8 @@ def _detect_report_type(task: str) -> str:
     lower = task.lower()
     if any(w in lower for w in ("risk", "breach", "limit", "compliance", "exposure")):
         return "risk"
-    if any(w in lower for w in ("performance", "p&l", "attribution", "return")):
+    # Check both raw and HTML-escaped form -- InputSanitizer converts & to &amp;
+    if any(w in lower for w in ("performance", "p&l", "p&amp;l", "attribution", "return")):
         return "performance"
     if any(w in lower for w in ("mandate", "objective", "benchmark")):
         return "mandate"

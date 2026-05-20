@@ -1,6 +1,6 @@
 """Task coordinator -- submits tasks to the graph and tracks active runs."""
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from datetime import datetime
 
 from src.orchestrator.state import create_initial_state, OrchestratorState, TaskStatus
@@ -18,7 +18,7 @@ class TaskCoordinator:
     def __init__(self, redis_store: RedisStore):
         self.redis_store = redis_store
         self.graph = OrchestrationGraph(redis_store=redis_store)
-        self.active_tasks: Dict[str, asyncio.Task] = {}
+        self.active_tasks: dict[str, asyncio.Task] = {}
 
     async def submit_task(
         self,
@@ -26,7 +26,7 @@ class TaskCoordinator:
         session_id: str,
         user_id: str,
         task: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[dict[str, Any]] = None,
     ) -> None:
         logger.info("task_submitted", task_id=task_id, session_id=session_id, user_id=user_id)
 
@@ -74,7 +74,7 @@ class TaskCoordinator:
         finally:
             self.active_tasks.pop(task_id, None)
 
-    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_task_status(self, task_id: str) -> Optional[dict[str, Any]]:
         state = await self.redis_store.get_task_state(task_id)
         if not state:
             return None

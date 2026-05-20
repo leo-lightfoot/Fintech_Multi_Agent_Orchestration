@@ -23,6 +23,15 @@ python-jose[cryptography]>=3.3.0
 # Database (placeholder)
 aiosqlite>=0.20.0
 
+# Vector store
+chromadb>=0.5.0
+
+# Document ingestion
+pypdf>=4.0.0
+
+# Excel / CSV
+openpyxl>=3.1.0
+
 # Security
 bleach>=6.1.0
 

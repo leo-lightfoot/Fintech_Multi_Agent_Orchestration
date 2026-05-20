@@ -9,7 +9,7 @@ Two separate concerns:
                               inside a database query.
 """
 import re
-from typing import Any, Dict
+from typing import Any
 import html
 import bleach
 from src.utils.logging import get_logger
@@ -20,8 +20,10 @@ logger = get_logger(__name__)
 class InputSanitizer:
     """Sanitizes user input to prevent injection attacks."""
 
-    # Shell / OS command injection -- still dangerous in natural language context
-    COMMAND_INJECTION_PATTERN = re.compile(r"[;&|`$(){}[\]<>]")
+    # Shell / OS command injection characters.
+    # < and > are intentionally excluded -- they appear in valid financial text
+    # e.g. "weight < 5%" or "P/E > 20".
+    COMMAND_INJECTION_PATTERN = re.compile(r"[;&|`$(){}[\]]")
 
     # SQL keywords -- only used when validating raw query parameters, NOT task text
     SQL_INJECTION_PATTERN = re.compile(
@@ -146,9 +148,9 @@ class InputSanitizer:
         return is_safe, threats
 
     @classmethod
-    def sanitize_dict(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Recursively sanitize dictionary values (used for the context payload)."""
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
 
         for key, value in data.items():
             safe_key = cls.sanitize_text(str(key), allow_html=False)

@@ -6,7 +6,6 @@ The collection is persisted to data/chroma/ and reloaded on startup.
 If the collection is empty (not yet ingested), searches return a helpful
 message rather than crashing.
 """
-import os
 from pathlib import Path
 from langchain_core.tools import tool
 
@@ -16,6 +15,8 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 COLLECTION_NAME = "fund_documents"
+# Anchor to project root (src/tools/documents.py -> root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _client = None
 _collection = None
 
@@ -27,7 +28,8 @@ def _get_collection():
         return _collection
 
     import chromadb
-    persist_path = str(Path(settings.vector_store_path).resolve())
+    # Resolve relative to project root, not CWD
+    persist_path = str((_PROJECT_ROOT / settings.vector_store_path).resolve())
     _client = chromadb.PersistentClient(path=persist_path)
 
     try:

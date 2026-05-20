@@ -32,9 +32,6 @@ class AuditEntry(BaseModel):
     action: str          # e.g. "agent_executed", "validation_passed", "task_failed"
     agent: str           # e.g. "data", "risk", "validator"
 
-    # What data was touched (best-effort -- populated from agent result metadata)
-    data_accessed: list[str] = Field(default_factory=list)
-
     # Outcome
     status: str = "success"   # success | error | stub
     result_summary: str = ""  # first 200 chars of the agent output

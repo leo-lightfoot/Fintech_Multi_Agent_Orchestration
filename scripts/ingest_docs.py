@@ -6,13 +6,13 @@ Run once before using document_search:
 Supported formats: .txt, .pdf
 Chunks each document into ~500-character passages with 50-char overlap.
 """
-import os
 import sys
 import hashlib
 from pathlib import Path
 
-# Allow importing from src/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Anchor all paths to the project root (scripts/ingest_docs.py -> root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils.config import settings
 from src.utils.logging import configure_logging, get_logger
@@ -56,8 +56,8 @@ def read_file(path: Path) -> str:
 def main():
     import chromadb
 
-    docs_path = Path(settings.docs_path).resolve()
-    store_path = Path(settings.vector_store_path).resolve()
+    docs_path = (_PROJECT_ROOT / settings.docs_path).resolve()
+    store_path = (_PROJECT_ROOT / settings.vector_store_path).resolve()
     store_path.mkdir(parents=True, exist_ok=True)
 
     if not docs_path.exists():

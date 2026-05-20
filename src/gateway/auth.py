@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# Role hierarchy -- higher index = more access
+# Valid roles. require_role() does a membership check -- no hierarchy is enforced.
 ROLES = ["ops_read", "ops_write", "risk_read", "admin"]
 
 # Tables each role may query. admin and ops_write get everything.

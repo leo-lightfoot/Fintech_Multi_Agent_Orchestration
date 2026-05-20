@@ -1,5 +1,5 @@
 """State definitions for the LangGraph orchestrator."""
-from typing import TypedDict, Optional, Dict, Any, List
+from typing import TypedDict, Optional, Any
 from enum import Enum
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -29,7 +29,7 @@ class ValidationResult(BaseModel):
     """Result from the single-pass validator."""
     approved: bool
     severity: str = "ok"          # ok | warn | reject
-    issues: List[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
     feedback: str = ""
 
 
@@ -54,7 +54,7 @@ class OrchestratorState(TypedDict):
 
     # Input
     task: str
-    context: Optional[Dict[str, Any]]
+    context: Optional[dict[str, Any]]
 
     # Lifecycle
     phase: Phase
@@ -63,10 +63,10 @@ class OrchestratorState(TypedDict):
 
     # Supervisor outputs
     intent: Optional[str]                  # classified intent label
-    agents_selected: List[str]             # e.g. ["data", "risk", "report"]
+    agents_selected: list[str]             # e.g. ["data", "risk", "report"]
 
     # Execution outputs
-    agent_results: Dict[str, Any]          # agent_name -> result dict
+    agent_results: dict[str, Any]          # agent_name -> result dict
 
     # Validation
     validation_result: Optional[ValidationResult]
@@ -76,7 +76,7 @@ class OrchestratorState(TypedDict):
     final_response: Optional[str]
 
     # Error tracking
-    errors: List[str]
+    errors: list[str]
 
     # Cost
     cost_tracking: CostTracking
@@ -86,7 +86,7 @@ class OrchestratorState(TypedDict):
     updated_at: datetime
 
     # Flexible metadata
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 def create_initial_state(
@@ -94,7 +94,7 @@ def create_initial_state(
     session_id: str,
     user_id: str,
     task: str,
-    context: Optional[Dict[str, Any]] = None,
+    context: Optional[dict[str, Any]] = None,
     budget_limit_usd: float = 10.0,
 ) -> OrchestratorState:
     """Create a clean initial state for a new task."""

@@ -75,12 +75,11 @@ class DataAgent:
         logger.info("data_agent_start", task_preview=task[:80])
 
         role = (context or {}).get("_role", "ops_read")
-        table_hint = _table_hint(role)
 
         # Strip internal routing keys before exposing context to the LLM
         public_context = {k: v for k, v in (context or {}).items() if not k.startswith("_")}
 
-        user_content = task + table_hint
+        user_content = task
         if validation_feedback:
             user_content += (
                 "\n\nNote -- previous attempt was rejected. Please address these issues:\n"
@@ -91,6 +90,7 @@ class DataAgent:
 
         messages: list = [
             SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=_table_hint(role)),
             HumanMessage(content=user_content),
         ]
 
@@ -136,9 +136,9 @@ class DataAgent:
 
 
 def _table_hint(role: str) -> str:
-    """Return a system note telling the LLM which tables this role may access."""
+    """Return a system instruction restricting which tables this role may access."""
     from src.gateway.auth import allowed_tables
     tables = allowed_tables(role)
     if not tables:
-        return "\n\n[RBAC] You have no table access for this role."
-    return f"\n\n[RBAC] Role '{role}' may only query these tables: {sorted(tables)}. Do not query other tables."
+        return "You have no database table access for this role. Do not run any SQL queries."
+    return f"You may only query these tables: {sorted(tables)}. Do not query any other tables."

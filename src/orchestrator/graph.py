@@ -42,15 +42,13 @@ class OrchestrationGraph:
     def _build_graph(self):
         workflow = StateGraph(OrchestratorState)
 
-        workflow.add_node("receive", self._receive_node)
         workflow.add_node("supervise", self._supervise_node)
         workflow.add_node("execute", self._execute_node)
         workflow.add_node("validate", self._validate_node)
         workflow.add_node("respond", self._respond_node)
         workflow.add_node("fail", self._fail_node)
 
-        workflow.set_entry_point("receive")
-        workflow.add_edge("receive", "supervise")
+        workflow.set_entry_point("supervise")
         workflow.add_edge("supervise", "execute")
         workflow.add_edge("execute", "validate")
 
@@ -74,13 +72,6 @@ class OrchestrationGraph:
     # ------------------------------------------------------------------
     # Nodes
     # ------------------------------------------------------------------
-
-    async def _receive_node(self, state: OrchestratorState) -> OrchestratorState:
-        logger.info("node_receive", task_id=state["task_id"])
-        state["phase"] = Phase.INIT
-        state["status"] = TaskStatus.SUBMITTED
-        state["progress"] = 0.05
-        return state
 
     async def _supervise_node(self, state: OrchestratorState) -> OrchestratorState:
         """Classify intent and choose which specialist agents to run."""
@@ -121,6 +112,9 @@ class OrchestrationGraph:
         state["status"] = TaskStatus.EXECUTING
         state["progress"] = 0.40
 
+        # Extract role once for all audit entries in this node
+        user_role = (state.get("context") or {}).get("_role", "ops_read")
+
         agent_results: dict = {}
         previous_results: dict = dict(state.get("agent_results") or {})
 
@@ -144,6 +138,7 @@ class OrchestrationGraph:
                     task_id=state["task_id"],
                     session_id=state["session_id"],
                     user_id=state["user_id"],
+                    role=user_role,
                     action="agent_executed",
                     agent=agent_name,
                     status="success",
@@ -151,8 +146,8 @@ class OrchestrationGraph:
                     cost_usd=state["cost_tracking"].total_cost_usd,
                 ))
 
-            except ImportError:
-                logger.warning("agent_not_found_using_stub", agent=agent_name)
+            except (ImportError, ModuleNotFoundError):
+                logger.warning("agent_module_not_found_using_stub", agent=agent_name)
                 agent_results[agent_name] = {
                     "status": "stub",
                     "result": f"[{agent_name} agent not yet implemented]",
@@ -161,11 +156,16 @@ class OrchestrationGraph:
                     task_id=state["task_id"],
                     session_id=state["session_id"],
                     user_id=state["user_id"],
+                    role=user_role,
                     action="agent_executed",
                     agent=agent_name,
                     status="stub",
                     result_summary=f"{agent_name} not yet implemented",
                 ))
+            except ValueError as exc:
+                logger.error("unknown_agent_name", agent=agent_name, error=str(exc))
+                agent_results[agent_name] = {"status": "error", "error": str(exc)}
+                state["errors"].append(f"{agent_name}: {exc}")
             except Exception as exc:
                 logger.error("agent_execution_failed", agent=agent_name, error=str(exc))
                 agent_results[agent_name] = {"status": "error", "error": str(exc)}
@@ -294,7 +294,7 @@ class OrchestrationGraph:
         if name == "report":
             from src.agents.reports import ReportAgent
             return ReportAgent(self.llm)
-        raise ImportError(f"No agent registered for name: '{name}'")
+        raise ValueError(f"No agent registered for name: '{name}'")
 
     async def run(self, state: OrchestratorState) -> OrchestratorState:
         """Run the full orchestration graph with real-time cost tracking."""

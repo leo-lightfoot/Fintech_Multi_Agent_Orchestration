@@ -26,19 +26,21 @@ MAX_FILE_BYTES = 50 * 1024 * 1024   # 50 MB
 MAX_ROWS = 100_000
 
 
+# Project root = two levels up from this file (src/tools/excel.py -> root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 def _safe_path(filename: str) -> Path:
-    """Resolve filename relative to DOCS_PATH and block directory traversal."""
-    base = Path(settings.docs_path).resolve()
-    # Also allow files under data/ at the project root
-    data_base = Path("data").resolve()
+    """Resolve filename relative to the project data/ directory.
+
+    Anchored to the project root so it works regardless of CWD.
+    Blocks directory traversal outside data/.
+    """
+    data_base = (_PROJECT_ROOT / "data").resolve()
 
     candidate = (data_base / filename).resolve()
-    if candidate.is_file():
-        return candidate
-
-    candidate = (base / filename).resolve()
     try:
-        candidate.relative_to(base)
+        candidate.relative_to(data_base)
     except ValueError:
         raise ValueError(f"Path traversal blocked: {filename}")
     return candidate

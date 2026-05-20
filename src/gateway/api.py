@@ -4,14 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 import uuid
 from datetime import datetime
 
 from src.utils.config import settings
 from src.utils.logging import configure_logging, get_logger
 from src.gateway.sanitizer import InputSanitizer
-from src.gateway.auth import AuthManager, TokenData, get_current_user
+from src.gateway.auth import AuthManager, TokenData, get_current_user, ROLES
 from src.gateway.middleware import limiter, rate_limit_exceeded_handler, RateLimitExceededError
 from src.orchestrator.coordinator import TaskCoordinator
 from src.memory.redis_store import RedisStore
@@ -84,7 +84,7 @@ class TaskRequest(BaseModel):
     """Request to submit a task."""
     task: str = Field(..., description="Task description")
     session_id: Optional[str] = Field(None, description="Session ID for continuity")
-    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+    context: Optional[dict[str, Any]] = Field(None, description="Additional context")
     user_id: Optional[str] = Field(None, description="User identifier")
 
 
@@ -274,18 +274,24 @@ async def get_session_history(
         Session data including all tasks and state
     """
     try:
-        history = await redis_store.get_session_history(session_id)
-        
-        if not history:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        return history
-    
-    except HTTPException:
-        raise
+        return await redis_store.get_session_history(session_id)
     except Exception as e:
         logger.error("session_retrieval_failed", session_id=session_id, error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.delete("/api/task/{task_id}")
+@limiter.limit("20/minute")
+async def cancel_task(
+    request: Request,
+    task_id: str,
+    current_user: Optional[TokenData] = Depends(get_current_user),
+):
+    """Cancel a running task. Returns 404 if not found or already complete."""
+    cancelled = await coordinator.cancel_task(task_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Task not found or already completed")
+    return {"task_id": task_id, "status": "cancelled"}
 
 
 @app.get("/api/audit/{session_id}")
@@ -317,7 +323,6 @@ async def create_token(
 
     Valid roles: ops_read, ops_write, risk_read, admin
     """
-    from src.gateway.auth import ROLES
     if role not in ROLES:
         raise HTTPException(status_code=400, detail=f"Unknown role '{role}'. Valid: {ROLES}")
     session_id = session_id or str(uuid.uuid4())
